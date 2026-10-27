@@ -31,12 +31,12 @@ private final class RecurrenceRowControls: UIView {
         backgroundColor = .clear
         isAccessibilityElement = false
 
-        increase.setImage(UIImage(systemName: "plus.circle.fill"), for: .normal)
-        increase.tintColor = .systemRed
+        increase.setImage(UIImage(systemName: "plus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 11, weight: .medium)), for: .normal)
+        increase.tintColor = .tertiaryLabel
         increase.accessibilityLabel = "Segna una ricorrenza in più"
         increase.addTarget(self, action: #selector(increaseTapped), for: .touchUpInside)
 
-        decrease.setImage(UIImage(systemName: "minus.circle"), for: .normal)
+        decrease.setImage(UIImage(systemName: "minus", withConfiguration: UIImage.SymbolConfiguration(pointSize: 10, weight: .medium)), for: .normal)
         decrease.tintColor = .secondaryLabel
         decrease.accessibilityLabel = "Togli una ricorrenza"
         decrease.addTarget(self, action: #selector(decreaseTapped), for: .touchUpInside)
@@ -264,8 +264,20 @@ struct BulletedEditor: UIViewRepresentable {
             storage.addAttributes([.foregroundColor: UIColor.label,
                                    .underlineStyle: 0], range: range)
             var offset = 0
+            let font = view.font ?? UIFont.preferredFont(forTextStyle: .body)
             for entry in parent.entries {
                 let lineLength = (entry.displayLine as NSString).length
+                // Hanging indent: automatic line wraps start exactly where the
+                // entry's text starts, not at the main quadrant margin.
+                let paragraph = NSMutableParagraphStyle()
+                paragraph.firstLineHeadIndent = 0
+                paragraph.headIndent = (entry.displayPrefix as NSString)
+                    .size(withAttributes: [.font: font]).width
+                let paragraphLength = min(lineLength + 1, max(0, fullText.length - offset))
+                if paragraphLength > 0 {
+                    storage.addAttribute(.paragraphStyle, value: paragraph,
+                                         range: NSRange(location: offset, length: paragraphLength))
+                }
                 if entry.kind == .todo && !entry.text.isEmpty {
                     let beginning = offset + (entry.displayPrefix as NSString).length
                     let length = (entry.text as NSString).length
@@ -322,11 +334,59 @@ struct BulletedEditor: UIViewRepresentable {
             parent.onOpenTodo(id)
         }
 
+        // Deleting a separator or the beginning of an entry must also consume
+        // the next entry's marker. Otherwise UIKit merges lines as
+        // "💭 first💭 second" and a duplicate symbol is left in the text.
+        private func mergeEntry(at index: Int, in view: UITextView) -> Bool {
+            guard index > 0, parent.entries.indices.contains(index) else { return false }
+            let source = (view.text ?? "") as NSString
+            let lines = (view.text ?? "").components(separatedBy: "\n")
+            guard lines.indices.contains(index) else { return false }
+            let precedingLines = Array(lines.prefix(index))
+            let previous = precedingLines.joined(separator: "\n")
+            let entry = parent.entries[index]
+            let current = lines[index]
+            let prefix = entry.displayPrefix
+            // A mid-autocorrect edit can have an unsynchronized UITextView.
+            // In that case avoid destructive changes.
+            guard current.hasPrefix(prefix) else { return false }
+            let body = String(current.dropFirst(prefix.count))
+            let separator = (!previous.isEmpty && !body.isEmpty &&
+                !previous.last!.isWhitespace && !body.first!.isWhitespace) ? " " : ""
+            let merged = previous + separator + body
+            let remaining = lines.dropFirst(index + 1)
+            let result = merged + (remaining.isEmpty ? "" : "\n" + remaining.joined(separator: "\n"))
+            pendingEdit = (startLine: index - 1, removedBreaks: 1, addedBreaks: 0)
+            view.text = result
+            view.selectedRange = NSRange(location: (previous + separator).utf16.count, length: 0)
+            textViewDidChange(view)
+            view.scrollRangeToVisible(view.selectedRange)
+            return true
+        }
+
         func textView(_ textView: UITextView,
                       shouldChangeTextIn range: NSRange,
                       replacementText text: String) -> Bool {
             let raw = (textView.text ?? "") as NSString
             guard range.location <= raw.length, NSMaxRange(range) <= raw.length else { return false }
+            // Single-character Backspace at a list boundary is special.
+            // Removing the marker or the separator also removes the obsolete
+            // marker from the following entry, rather than duplicating it.
+            if text.isEmpty && range.length == 1 {
+                let removedChar = raw.substring(with: range)
+                let before = raw.substring(to: range.location)
+                let lineIndex = before.filter { $0 == "\n" }.count
+                if removedChar == "\n" {
+                    if mergeEntry(at: lineIndex + 1, in: textView) { return false }
+                } else if parent.entries.indices.contains(lineIndex) {
+                    let lineStart = raw.lineRange(for: NSRange(location: range.location, length: 0)).location
+                    let prefixEnd = lineStart + (parent.entries[lineIndex].displayPrefix as NSString).length
+                    if range.location >= lineStart && range.location < prefixEnd {
+                        if lineIndex == 0 { return false } // Keep first list marker intact.
+                        if mergeEntry(at: lineIndex, in: textView) { return false }
+                    }
+                }
+            }
             let prior = raw.substring(to: range.location)
             let removed = raw.substring(with: range)
             pendingEdit = (

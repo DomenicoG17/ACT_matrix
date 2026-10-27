@@ -13,6 +13,7 @@ struct MatrixView: View {
     @State private var titleDraft = ""
     @State private var showTodos = false
     @State private var noteRoute: TodoNoteRoute?
+    @AppStorage("showTapToWriteHint") private var showTapToWriteHint = false
 
     private let gap: CGFloat = 9
     private let focusScale: CGFloat = 1.78
@@ -61,6 +62,21 @@ struct MatrixView: View {
                         .transition(.move(edge: .trailing))
                 } else {
                     board(width: width * scale, height: height * scale)
+                        .simultaneousGesture(DragGesture(minimumDistance: 35).onEnded { drag in
+                            guard selectedQuadrant == nil else { return }
+                            let dx = drag.translation.width
+                            let dy = drag.translation.height
+                            // Avoid collisions with per-quadrant vertical scrolling:
+                            // navigate only from the center crossing or screen edges.
+                            let startX = drag.startLocation.x
+                            let inCenter = abs(startX - width / 2) <= 65
+                            let atEdge = startX <= 24 || startX >= width - 24
+                            guard inCenter || atEdge,
+                                  abs(dy) >= 92, abs(dy) >= abs(dx) * 1.7 else { return }
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                _ = store.navigateMatrix(by: dy < 0 ? 1 : -1)
+                            }
+                        })
                         .offset(x: xOffset, y: yOffset)
                         .animation(.spring(response: 0.38, dampingFraction: 0.87), value: selectedQuadrant)
                         .frame(width: width, height: height, alignment: .topLeading)
@@ -159,7 +175,7 @@ struct MatrixView: View {
                     Text(store.activeMatrix.title.isEmpty ? "ACT Matrix" : store.activeMatrix.title)
                         .font(.headline)
                         .lineLimit(1)
-                    Text(store.activeMatrix.createdAt.formatted(date: .abbreviated, time: .shortened))
+                    Text("\(store.activeMatrix.createdAt.formatted(date: .abbreviated, time: .shortened)) · \((store.matrices.firstIndex(where: { $0.id == store.activeID }) ?? 0) + 1)/\(store.matrices.count)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
@@ -205,17 +221,59 @@ struct MatrixView: View {
     private func board(width: CGFloat, height: CGFloat) -> some View {
         let tileWidth = max(1, (width - gap) / 2)
         let tileHeight = max(1, (height - gap) / 2)
-        return VStack(spacing: gap) {
-            HStack(spacing: gap) {
-                tile(0).frame(width: tileWidth, height: tileHeight)
-                tile(1).frame(width: tileWidth, height: tileHeight)
+        return ZStack {
+            VStack(spacing: gap) {
+                HStack(spacing: gap) {
+                    tile(0).frame(width: tileWidth, height: tileHeight)
+                    tile(1).frame(width: tileWidth, height: tileHeight)
+                }
+                HStack(spacing: gap) {
+                    tile(2).frame(width: tileWidth, height: tileHeight)
+                    tile(3).frame(width: tileWidth, height: tileHeight)
+                }
             }
-            HStack(spacing: gap) {
-                tile(2).frame(width: tileWidth, height: tileHeight)
-                tile(3).frame(width: tileWidth, height: tileHeight)
+            if selectedQuadrant == nil {
+                meNoticingControl
             }
         }
         .frame(width: width, height: height, alignment: .topLeading)
+    }
+
+    private var meNoticingControl: some View {
+        HStack(spacing: 3) {
+            if store.activeMatrix.meNoticingCount > 0 {
+                Button {
+                    store.adjustMeNoticing(by: -1)
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 46)
+                }
+                .accessibilityLabel("Correggi Me Noticing: meno uno")
+            }
+            Button {
+                store.adjustMeNoticing(by: 1)
+            } label: {
+                VStack(spacing: 1) {
+                    Text("Me Noticing")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.primary)
+                    Text("\(store.activeMatrix.meNoticingCount)")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundStyle(.red)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 46)
+                .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Me Noticing, \(store.activeMatrix.meNoticingCount) momenti. Tocca per aggiungerne uno")
+        }
+        .buttonStyle(.plain)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.13), lineWidth: 1))
+        .shadow(color: .black.opacity(0.07), radius: 5, y: 2)
+        .zIndex(10)
     }
 
     private func tile(_ quadrant: Int) -> some View {
@@ -301,12 +359,18 @@ struct MatrixView: View {
             !entries[$0].text.trimmingCharacters(in: .whitespaces).isEmpty
         }
         if visible.isEmpty {
-            Text("Tocca per scrivere…")
-                .font(.system(size: 13))
-                .foregroundStyle(.tertiary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .contentShape(Rectangle())
-                .onTapGesture { openQuadrant(quadrant, addBlank: true) }
+            Group {
+                if showTapToWriteHint {
+                    Text("Tocca per scrivere…")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Color.clear
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .contentShape(Rectangle())
+            .onTapGesture { openQuadrant(quadrant, addBlank: true) }
         } else {
             // The content covers at least the scroll viewport. Its transparent
             // background is tappable, including the space UNDER existing rows.
@@ -317,7 +381,12 @@ struct MatrixView: View {
                     VStack(alignment: .leading, spacing: 7) {
                         ForEach(visible, id: \.self) { index in
                             HStack(alignment: .top, spacing: 4) {
-                                Text(entries[index].indentLevel > 0 ? "↳" : entries[index].kind.symbol)
+                                if entries[index].indentLevel > 0 {
+                                    Text("↳")
+                                    Text(entries[index].kind.symbol)
+                                } else {
+                                    Text(entries[index].kind.symbol)
+                                }
                                 Text(entries[index].text)
                                     .foregroundStyle(entries[index].kind == .todo ? Color.blue : Color.primary)
                                     .underline(entries[index].kind == .todo)

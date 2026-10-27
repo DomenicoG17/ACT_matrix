@@ -31,6 +31,7 @@ struct ArchiveView: View {
     @State private var exportDocument: BackupDocument?
     @State private var showImport = false
     @State private var feedbackMessage: String?
+    @State private var showSettings = false
 
     // The tree is grouped by CREATION date, not last-modified date.
     // Months and days are generated from the actual saved timestamps.
@@ -130,6 +131,10 @@ struct ArchiveView: View {
                     Button("Chiudi") { dismiss() }
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { showSettings = true } label: {
+                        Image(systemName: "gearshape")
+                    }
+                    .accessibilityLabel("Impostazioni dell’app")
                     Menu {
                         Button {
                             do {
@@ -154,6 +159,9 @@ struct ArchiveView: View {
                     }
                     .accessibilityLabel("Nuova matrice")
                 }
+            }
+            .sheet(isPresented: $showSettings) {
+                ACTMatrixSettingsView()
             }
             .alert("Rinomina matrice", isPresented: Binding(
                 get: { renamingID != nil },
@@ -281,5 +289,34 @@ struct ArchiveView: View {
                 RoundedRectangle(cornerRadius: 3)
                     .strokeBorder(Color.teal.opacity(0.5), lineWidth: 0.7)
             }
+    }
+}
+
+// Accessible from Home → gear. UserDefaults is intentionally local, so this
+// display preference does not modify any matrix or its backup format.
+private struct ACTMatrixSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("showTapToWriteHint") private var showTapToWriteHint = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Visualizzazione") {
+                    Toggle("Mostra «Tocca per scrivere»", isOn: $showTapToWriteHint)
+                } footer: {
+                    Text("Se disattivato, i riquadri vuoti rimangono completamente bianchi. Puoi sempre toccarli per iniziare a scrivere.")
+                }
+                Section("Navigazione") {
+                    Text("Nella vista completa, scorri in alto o in basso partendo dal centro della matrice o dal bordo laterale per passare alla matrice precedente o successiva. I singoli riquadri continuano a scorrere indipendentemente.")
+                }
+            }
+            .navigationTitle("Impostazioni")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Fine") { dismiss() }
+                }
+            }
+        }
     }
 }

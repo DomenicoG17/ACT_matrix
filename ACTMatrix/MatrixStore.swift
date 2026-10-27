@@ -76,7 +76,8 @@ struct ACTEntry: Identifiable, Codable, Equatable {
 
     var displayPrefix: String {
         let indent = String(repeating: "    ", count: indentLevel)
-        return indent + (indentLevel > 0 ? "↳ " : kind.prefix)
+        // Nested entries retain BOTH their branching arrow and selected type.
+        return indent + (indentLevel > 0 ? "↳ " + kind.prefix : kind.prefix)
     }
 
     var displayLine: String { displayPrefix + text }
@@ -92,7 +93,9 @@ struct ACTEntry: Identifiable, Codable, Equatable {
         }
         if text.hasPrefix("↳ ") {
             text.removeFirst(2)
-            return ACTEntry(text: text, kind: fallback?.kind ?? .bullet, indentLevel: max(1, level))
+            // Old nested lines only had ↳; new ones also include 💭/🎇/🏞️/🔲.
+            let nested = ACTEntryKind.parse(text, fallback: fallback?.kind ?? .bullet)
+            return ACTEntry(text: nested.text, kind: nested.kind, indentLevel: max(1, level))
         }
         let parsed = ACTEntryKind.parse(text, fallback: fallback?.kind ?? .bullet)
         return ACTEntry(text: parsed.text, kind: parsed.kind, indentLevel: level)
@@ -108,13 +111,15 @@ struct ACTMatrix: Identifiable, Codable, Equatable {
     var quadrants: [[ACTEntry]] = (0..<4).map { _ in [ACTEntry()] }
     // Custom order applies only to the to-do screen, never the original matrix.
     var todoOrder: [UUID] = []
+    // Per-matrix counter for moments of observing one's experience.
+    var meNoticingCount: Int = 0
 
     init() {}
 
     // Seamlessly open BOTH the v1 [[String]] format and the new v2 [[ACTEntry]] format.
     // The same decoder is used for on-device data and imported JSON backups.
     private enum CodingKeys: String, CodingKey {
-        case id, title, createdAt, updatedAt, quadrants, todoOrder
+        case id, title, createdAt, updatedAt, quadrants, todoOrder, meNoticingCount
     }
 
     init(from decoder: Decoder) throws {
@@ -124,6 +129,7 @@ struct ACTMatrix: Identifiable, Codable, Equatable {
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
         todoOrder = try container.decodeIfPresent([UUID].self, forKey: .todoOrder) ?? []
+        meNoticingCount = max(0, try container.decodeIfPresent(Int.self, forKey: .meNoticingCount) ?? 0)
         if let current = try? container.decode([[ACTEntry]].self, forKey: .quadrants) {
             quadrants = current
         } else if let legacy = try? container.decode([[String]].self, forKey: .quadrants) {
@@ -167,7 +173,7 @@ struct ACTMatrix: Identifiable, Codable, Equatable {
 }
 
 struct MatrixBackup: Codable {
-    var version: Int = 4
+    var version: Int = 5
     var matrices: [ACTMatrix]
     var activeID: UUID
 }
@@ -321,6 +327,30 @@ final class MatrixStore: ObservableObject {
         save()
     }
 
+    func adjustMeNoticing(by delta: Int) {
+        guard let index = matrices.firstIndex(where: { $0.id == activeID }) else { return }
+        let old = matrices[index].meNoticingCount
+        let next: Int
+        if delta > 0 { next = old < Int.max ? old + 1 : old }
+        else if delta < 0 { next = max(0, old - 1) }
+        else { return }
+        guard next != old else { return }
+        matrices[index].meNoticingCount = next
+        matrices[index].updatedAt = Date()
+        save()
+    }
+
+    // Matrices are ordered by creation date (newest first): swipe up for older,
+    // swipe down for newer. Do not wrap at either end.
+    @discardableResult
+    func navigateMatrix(by offset: Int) -> Bool {
+        guard let current = matrices.firstIndex(where: { $0.id == activeID }),
+              matrices.indices.contains(current + offset) else { return false }
+        activeID = matrices[current + offset].id
+        save()
+        return true
+    }
+
     func createMatrix() {
         let matrix = ACTMatrix()
         matrices.insert(matrix, at: 0)
@@ -358,7 +388,7 @@ final class MatrixStore: ObservableObject {
     @discardableResult
     func importBackup(_ data: Data) throws -> Int {
         let backup = try Self.decoder.decode(MatrixBackup.self, from: data)
-        guard (1...4).contains(backup.version) else { throw BackupError.unsupportedVersion }
+        guard (1...5).contains(backup.version) else { throw BackupError.unsupportedVersion }
         let existingIDs = Set(matrices.map(\.id))
         var incoming = backup.matrices.filter { !existingIDs.contains($0.id) }
         for index in incoming.indices { incoming[index].repairIfNeeded() }
