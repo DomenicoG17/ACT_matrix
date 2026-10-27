@@ -1,8 +1,25 @@
-# ACT Matrix — iOS v1.1.0
+# ACT Matrix — iOS v1.2.0
 
 Un'app iPhone/iPad **SwiftUI + UIKit**, privata, senza server né account, che salva automaticamente le matrici ACT sul dispositivo. Richiede iOS 17+. Il progetto include il workflow GitHub Actions che genera un IPA non firmato, per l'installazione tramite SideStore (come per StripStudio).
 
-## Novità della versione 1.1
+## Novità della versione 1.2 — contatore delle ricorrenze
+
+Accanto a **ogni voce compilata**, sia nella vista completa 2×2 sia in modalità di scrittura, è disponibile un piccolo pulsante rosso **+**. Premilo ogni volta che il pensiero (o altra esperienza) si ripresenta:
+
+- Al primo tocco appare il numero rosso **1**; ogni tocco successivo lo incrementa.
+- Quando il numero è maggiore di zero compare un piccolo pulsante **−** per correggere il conteggio. Non può andare sotto zero.
+- Il conteggio appartiene a quella voce specifica, non al riquadro. Restano invariati testo, icona, ordine e data di creazione.
+- I nuovi punti creati con **Invio** ereditano il tipo 💭/🎇/🏞️/🔲 ma **iniziano da zero**, senza copiare il contatore.
+- I numeri vengono salvati automaticamente sul dispositivo e nell'esportazione JSON; sono recuperabili anche riaprendo l'app.
+- Le vecchie matrici e i backup v1.0/v1.1 vengono aperti con tutti i contenuti originali e contatori inizialmente a zero.
+
+### Aggiornamento rapido dal solo iPhone
+
+Se GitHub contiene già la versione funzionante 1.1.1, nella cartella `ACTMatrix` sostituisci solo **tre file**: `MatrixStore.swift`, `MatrixView.swift` e `BulletedEditor.swift`. Il file `ACTMatrix.xcodeproj/project.pbxproj` serve a far comparire correttamente il numero di versione 1.2.0 nell'app (consigliato, ma non indispensabile per la funzionalità). Il workflow `.github/workflows/build-ios.yml` non deve essere modificato.
+
+**Prima di aggiornare** esporta un backup dalla home, e soprattutto **non disinstallare** l'app preesistente. Il bundle identifier è rimasto `app.actmatrix.mobile`.
+
+## Funzionalità introdotte nella versione 1.1
 
 ### Tipi di voce sopra la tastiera
 
@@ -88,7 +105,7 @@ ACTMatrix/Assets.xcassets/
 ## Verifiche e limiti
 
 - Verificata localmente la sintassi Swift di tutti i file.
-- Testata con Swift la migrazione di un backup di v1.0, la decodifica/codifica del formato v1.1 e l'interpretazione delle quattro emoji.
+- Test di retrocompatibilità del modello dati con formati precedenti e dei contatori sono inclusi nelle verifiche di questo aggiornamento.
 - Non è possibile eseguire qui l'interfaccia iOS o `xcodebuild`: **il primo build reale si verifica nel workflow GitHub**, ed eventuali errori del compiler iOS devono essere corretti usando il suo log.
 - L'icona 🔲 indica un'azione da fare ma non gestisce ancora lo stato completato; per le altre emoji si tratta di classificazioni visive, non riconoscimento automatico del contenuto.
 

@@ -44,6 +44,27 @@ enum ACTEntryKind: String, Codable, CaseIterable {
 struct ACTEntry: Codable, Equatable {
     var text: String = ""
     var kind: ACTEntryKind = .bullet
+    // Number of times this experience has returned, tracked independently
+    // for every entry. Old on-device files and backups have no such key.
+    var recurrenceCount: Int = 0
+
+    init(text: String = "", kind: ACTEntryKind = .bullet, recurrenceCount: Int = 0) {
+        self.text = text
+        self.kind = kind
+        self.recurrenceCount = max(0, recurrenceCount)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text, kind, recurrenceCount
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        text = try values.decodeIfPresent(String.self, forKey: .text) ?? ""
+        kind = try values.decodeIfPresent(ACTEntryKind.self, forKey: .kind) ?? .bullet
+        recurrenceCount = max(0,
+            try values.decodeIfPresent(Int.self, forKey: .recurrenceCount) ?? 0)
+    }
 }
 
 struct ACTMatrix: Identifiable, Codable, Equatable {
@@ -102,7 +123,7 @@ struct ACTMatrix: Identifiable, Codable, Equatable {
 }
 
 struct MatrixBackup: Codable {
-    var version: Int = 2
+    var version: Int = 3
     var matrices: [ACTMatrix]
     var activeID: UUID
 }
@@ -161,6 +182,26 @@ final class MatrixStore: ObservableObject {
         save()
     }
 
+    // Count a recurring thought/feeling/image/action without affecting its text,
+    // selected icon or any other item. Also works from the 2x2 overview.
+    func adjustRecurrence(in quadrant: Int, at entryIndex: Int, by delta: Int) {
+        guard (0..<4).contains(quadrant),
+              let matrixIndex = matrices.firstIndex(where: { $0.id == activeID }),
+              matrices[matrixIndex].quadrants[quadrant].indices.contains(entryIndex)
+        else { return }
+        let old = matrices[matrixIndex].quadrants[quadrant][entryIndex].recurrenceCount
+        let newValue: Int
+        if delta > 0 {
+            newValue = old == Int.max ? old : old + 1
+        } else if delta < 0 {
+            newValue = max(0, old - 1)
+        } else { return }
+        guard newValue != old else { return }
+        matrices[matrixIndex].quadrants[quadrant][entryIndex].recurrenceCount = newValue
+        matrices[matrixIndex].updatedAt = Date()
+        save()
+    }
+
     // Navigation goes to an empty last entry; its icon follows the previous entry.
     func prepareNewBullet(in quadrant: Int) {
         guard (0..<4).contains(quadrant),
@@ -210,7 +251,7 @@ final class MatrixStore: ObservableObject {
     @discardableResult
     func importBackup(_ data: Data) throws -> Int {
         let backup = try Self.decoder.decode(MatrixBackup.self, from: data)
-        guard (1...2).contains(backup.version) else { throw BackupError.unsupportedVersion }
+        guard (1...3).contains(backup.version) else { throw BackupError.unsupportedVersion }
         let existingIDs = Set(matrices.map(\.id))
         var incoming = backup.matrices.filter { !existingIDs.contains($0.id) }
         for index in incoming.indices { incoming[index].repairIfNeeded() }

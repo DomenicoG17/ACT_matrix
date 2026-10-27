@@ -186,6 +186,10 @@ struct MatrixView: View {
                     Spacer(minLength: 0)
                 }
                 .padding(.top, 3)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if !selected { openQuadrant(quadrant, addBlank: true) }
+                }
 
                 if selected {
                     BulletedEditor(
@@ -199,11 +203,14 @@ struct MatrixView: View {
                             openQuadrant(destination, addBlank: true)
                         },
                         onNew: createNewMatrix,
-                        onShowAll: { selectedQuadrant = nil }
+                        onShowAll: { selectedQuadrant = nil },
+                        onAdjustRecurrence: { index, delta in
+                            store.adjustRecurrence(in: quadrant, at: index, by: delta)
+                        }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    preview(entries)
+                    preview(entries, quadrant: quadrant)
                 }
             }
             .padding(13)
@@ -217,28 +224,37 @@ struct MatrixView: View {
                 )
         }
         .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
-        // Simultaneous tap doesn't steal the vertical drag from the inner ScrollView.
-        .simultaneousGesture(TapGesture().onEnded {
-            if !selected { openQuadrant(quadrant, addBlank: true) }
-        })
+        // Only text/empty space activates zoom. A counter tap must NOT zoom.
     }
 
     @ViewBuilder
-    private func preview(_ entries: [ACTEntry]) -> some View {
-        let nonempty = entries.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
-        if nonempty.isEmpty {
+    private func preview(_ entries: [ACTEntry], quadrant: Int) -> some View {
+        let visible = entries.indices.filter {
+            !entries[$0].text.trimmingCharacters(in: .whitespaces).isEmpty
+        }
+        if visible.isEmpty {
             Text("Tocca per scrivere…")
                 .font(.system(size: 13))
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .contentShape(Rectangle())
+                .onTapGesture { openQuadrant(quadrant, addBlank: true) }
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 7) {
-                    ForEach(nonempty.indices, id: \.self) { entryIndex in
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(nonempty[entryIndex].kind.symbol)
-                            Text(nonempty[entryIndex].text)
+                    ForEach(visible, id: \.self) { index in
+                        HStack(alignment: .top, spacing: 4) {
+                            Text(entries[index].kind.symbol)
+                            Text(entries[index].text)
                                 .fixedSize(horizontal: false, vertical: true)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                                .onTapGesture { openQuadrant(quadrant, addBlank: true) }
+                            recurrenceControls(
+                                count: entries[index].recurrenceCount,
+                                quadrant: quadrant,
+                                index: index
+                            )
                         }
                         .font(.system(size: 13))
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -248,6 +264,38 @@ struct MatrixView: View {
             }
             .scrollIndicators(.hidden)
         }
+    }
+
+    private func recurrenceControls(count: Int, quadrant: Int, index: Int) -> some View {
+        HStack(spacing: 2) {
+            if count > 0 {
+                Button {
+                    store.adjustRecurrence(in: quadrant, at: index, by: -1)
+                } label: {
+                    Image(systemName: "minus")
+                        .font(.system(size: 9, weight: .bold))
+                        .frame(width: 18, height: 23)
+                }
+                .accessibilityLabel("Diminuisci ricorrenze")
+                Text("\(count)")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.red)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .accessibilityLabel("\(count) ricorrenze")
+            }
+            Button {
+                store.adjustRecurrence(in: quadrant, at: index, by: 1)
+            } label: {
+                Image(systemName: "plus.circle.fill")
+                    .font(.system(size: 17))
+                    .foregroundStyle(.red.opacity(0.85))
+                    .frame(width: 23, height: 24)
+            }
+            .accessibilityLabel("Aumenta ricorrenze")
+        }
+        .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     private func openQuadrant(_ quadrant: Int, addBlank: Bool) {
