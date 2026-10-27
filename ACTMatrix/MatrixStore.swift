@@ -2,17 +2,87 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
+// The icon is a property of EACH entry, not of the whole quadrant.
+// "bullet" preserves the look of notes created in ACT Matrix 1.0.
+enum ACTEntryKind: String, Codable, CaseIterable {
+    case bullet, thought, feeling, image, todo
+
+    var symbol: String {
+        switch self {
+        case .bullet: return "•"
+        case .thought: return "💭"
+        case .feeling: return "🎇"
+        case .image: return "🏞️"
+        case .todo: return "🔲"
+        }
+    }
+
+    var prefix: String { symbol + " " }
+
+    var accessibilityName: String {
+        switch self {
+        case .bullet: return "Punto elenco"
+        case .thought: return "Pensiero"
+        case .feeling: return "Sensazione"
+        case .image: return "Immagine"
+        case .todo: return "Da fare"
+        }
+    }
+
+    static func parse(_ line: String, fallback: ACTEntryKind = .bullet) -> ACTEntry {
+        for kind in Self.allCases where line.hasPrefix(kind.prefix) {
+            return ACTEntry(text: String(line.dropFirst(kind.prefix.count)), kind: kind)
+        }
+        // Some old/hand-edited bullets may lack a following space.
+        if line.hasPrefix("•") {
+            return ACTEntry(text: String(line.dropFirst()).trimmingCharacters(in: .whitespaces), kind: .bullet)
+        }
+        return ACTEntry(text: line, kind: fallback)
+    }
+}
+
+struct ACTEntry: Codable, Equatable {
+    var text: String = ""
+    var kind: ACTEntryKind = .bullet
+}
+
 struct ACTMatrix: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var title: String = ""
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
     // Reading order: top-left, top-right, bottom-left, bottom-right.
-    var quadrants: [[String]] = Array(repeating: [""], count: 4)
+    var quadrants: [[ACTEntry]] = (0..<4).map { _ in [ACTEntry()] }
+
+    init() {}
+
+    // Seamlessly open BOTH the v1 [[String]] format and the new v2 [[ACTEntry]] format.
+    // The same decoder is used for on-device data and imported JSON backups.
+    private enum CodingKeys: String, CodingKey {
+        case id, title, createdAt, updatedAt, quadrants
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+        if let current = try? container.decode([[ACTEntry]].self, forKey: .quadrants) {
+            quadrants = current
+        } else if let legacy = try? container.decode([[String]].self, forKey: .quadrants) {
+            quadrants = legacy.map { $0.map { ACTEntry(text: $0, kind: .bullet) } }
+        } else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .quadrants, in: container, debugDescription: "Unsupported quadrant data"
+            )
+        }
+        repairIfNeeded()
+    }
 
     var itemCount: Int {
         quadrants.flatMap { $0 }.filter {
-            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }.count
     }
 
@@ -23,16 +93,16 @@ struct ACTMatrix: Identifiable, Codable, Equatable {
     }
 
     mutating func repairIfNeeded() {
-        while quadrants.count < 4 { quadrants.append([""]) }
+        while quadrants.count < 4 { quadrants.append([ACTEntry()]) }
         if quadrants.count > 4 { quadrants = Array(quadrants.prefix(4)) }
         for index in 0..<4 where quadrants[index].isEmpty {
-            quadrants[index] = [""]
+            quadrants[index] = [ACTEntry()]
         }
     }
 }
 
 struct MatrixBackup: Codable {
-    var version: Int = 1
+    var version: Int = 2
     var matrices: [ACTMatrix]
     var activeID: UUID
 }
@@ -56,15 +126,19 @@ final class MatrixStore: ObservableObject {
            !backup.matrices.isEmpty {
             var repaired = backup.matrices
             for index in repaired.indices { repaired[index].repairIfNeeded() }
-            matrices = repaired.sorted { $0.createdAt > $1.createdAt }
-            activeID = matrices.contains(where: { $0.id == backup.activeID })
-                ? backup.activeID : matrices[0].id
+            // Finish computing the restored data before accessing stored properties.
+            // In Swift, referring to self.matrices before activeID has been set
+            // is not permitted inside an initializer.
+            let sortedMatrices = repaired.sorted { $0.createdAt > $1.createdAt }
+            let restoredActiveID = sortedMatrices.contains { $0.id == backup.activeID }
+                ? backup.activeID : sortedMatrices[0].id
+            matrices = sortedMatrices
+            activeID = restoredActiveID
         } else {
             let first = ACTMatrix()
             matrices = [first]
             activeID = first.id
         }
-        // Persist the timestamp of the initial, still-empty matrix as well.
         save()
     }
 
@@ -72,28 +146,28 @@ final class MatrixStore: ObservableObject {
         matrices.first(where: { $0.id == activeID }) ?? matrices[0]
     }
 
-    func lines(in quadrant: Int) -> [String] {
-        guard (0..<4).contains(quadrant) else { return [""] }
+    func entries(in quadrant: Int) -> [ACTEntry] {
+        guard (0..<4).contains(quadrant) else { return [ACTEntry()] }
         return activeMatrix.quadrants[quadrant]
     }
 
-    func updateLines(_ lines: [String], in quadrant: Int) {
+    func updateEntries(_ entries: [ACTEntry], in quadrant: Int) {
         guard (0..<4).contains(quadrant),
               let index = matrices.firstIndex(where: { $0.id == activeID }) else { return }
-        let newLines = lines.isEmpty ? [""] : lines
-        guard matrices[index].quadrants[quadrant] != newLines else { return }
-        matrices[index].quadrants[quadrant] = newLines
+        let value = entries.isEmpty ? [ACTEntry()] : entries
+        guard matrices[index].quadrants[quadrant] != value else { return }
+        matrices[index].quadrants[quadrant] = value
         matrices[index].updatedAt = Date()
         save()
     }
 
-    // Visiting a quadrant always puts the cursor on an empty bullet at the end.
-    // Reuse an existing empty bullet rather than accumulating blank lines.
+    // Navigation goes to an empty last entry; its icon follows the previous entry.
     func prepareNewBullet(in quadrant: Int) {
         guard (0..<4).contains(quadrant),
               let index = matrices.firstIndex(where: { $0.id == activeID }) else { return }
-        if matrices[index].quadrants[quadrant].last?.isEmpty == false {
-            matrices[index].quadrants[quadrant].append("")
+        let last = matrices[index].quadrants[quadrant].last ?? ACTEntry()
+        if !last.text.isEmpty {
+            matrices[index].quadrants[quadrant].append(ACTEntry(kind: last.kind))
             matrices[index].updatedAt = Date()
             save()
         }
@@ -136,7 +210,7 @@ final class MatrixStore: ObservableObject {
     @discardableResult
     func importBackup(_ data: Data) throws -> Int {
         let backup = try Self.decoder.decode(MatrixBackup.self, from: data)
-        guard backup.version == 1 else { throw BackupError.unsupportedVersion }
+        guard (1...2).contains(backup.version) else { throw BackupError.unsupportedVersion }
         let existingIDs = Set(matrices.map(\.id))
         var incoming = backup.matrices.filter { !existingIDs.contains($0.id) }
         for index in incoming.indices { incoming[index].repairIfNeeded() }
@@ -154,7 +228,6 @@ final class MatrixStore: ObservableObject {
             )
             let data = try backupData()
             try data.write(to: fileURL, options: .atomic)
-            // iOS data protection also applies when the phone is locked.
             try FileManager.default.setAttributes(
                 [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
                 ofItemAtPath: fileURL.path

@@ -1,6 +1,19 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct ACTDayGroup: Identifiable {
+    let date: Date
+    let matrices: [ACTMatrix]
+    var id: Date { date }
+}
+
+private struct ACTMonthGroup: Identifiable {
+    let date: Date
+    let days: [ACTDayGroup]
+    var id: Date { date }
+    var count: Int { days.reduce(0) { $0 + $1.matrices.count } }
+}
+
 struct ArchiveView: View {
     @EnvironmentObject private var store: MatrixStore
     @Environment(\.dismiss) private var dismiss
@@ -8,6 +21,9 @@ struct ArchiveView: View {
     let onSelect: (UUID) -> Void
     let onNew: () -> Void
 
+    @State private var expandedMonths: Set<Date> = []
+    @State private var expandedDays: Set<Date> = []
+    @State private var initializedTree = false
     @State private var renamingID: UUID?
     @State private var titleDraft = ""
     @State private var deletingID: UUID?
@@ -16,60 +32,99 @@ struct ArchiveView: View {
     @State private var showImport = false
     @State private var feedbackMessage: String?
 
+    // The tree is grouped by CREATION date, not last-modified date.
+    // Months and days are generated from the actual saved timestamps.
+    private var monthGroups: [ACTMonthGroup] {
+        let calendar = Calendar.autoupdatingCurrent
+        let byMonth = Dictionary(grouping: store.matrices) { matrix in
+            calendar.date(from: calendar.dateComponents([.year, .month], from: matrix.createdAt))
+                ?? calendar.startOfDay(for: matrix.createdAt)
+        }
+        return byMonth.keys.sorted(by: >).map { month in
+            let byDay = Dictionary(grouping: byMonth[month] ?? []) {
+                calendar.startOfDay(for: $0.createdAt)
+            }
+            let days = byDay.keys.sorted(by: >).map { day in
+                ACTDayGroup(date: day, matrices: (byDay[day] ?? []).sorted {
+                    $0.createdAt > $1.createdAt
+                })
+            }
+            return ACTMonthGroup(date: month, days: days)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(store.matrices) { matrix in
-                        Button {
-                            onSelect(matrix.id)
+                    ForEach(monthGroups) { month in
+                        DisclosureGroup(isExpanded: Binding(
+                            get: { expandedMonths.contains(month.id) },
+                            set: { expanded in
+                                if expanded { expandedMonths.insert(month.id) }
+                                else { expandedMonths.remove(month.id) }
+                            }
+                        )) {
+                            ForEach(month.days) { day in
+                                DisclosureGroup(isExpanded: Binding(
+                                    get: { expandedDays.contains(day.id) },
+                                    set: { expanded in
+                                        if expanded { expandedDays.insert(day.id) }
+                                        else { expandedDays.remove(day.id) }
+                                    }
+                                )) {
+                                    ForEach(day.matrices) { matrix in
+                                        matrixRow(matrix)
+                                    }
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "calendar")
+                                            .foregroundStyle(.secondary)
+                                        Text(day.date.formatted(
+                                            .dateTime.weekday(.wide).day().locale(Locale(identifier: "it_IT"))
+                                        ))
+                                            .font(.subheadline.weight(.medium))
+                                        Spacer(minLength: 4)
+                                        Text("\(day.matrices.count)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .padding(.vertical, 5)
+                                }
+                            }
                         } label: {
-                            HStack(spacing: 14) {
-                                quadrantThumbnail
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(matrix.displayTitle)
-                                        .font(.body.weight(.medium))
-                                        .foregroundStyle(.primary)
-                                        .lineLimit(2)
-                                    Text("Creata il \(matrix.createdAt.formatted(date: .abbreviated, time: .shortened))")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    Text("\(matrix.itemCount) punti")
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
-                                }
-                                Spacer(minLength: 0)
-                                if matrix.id == store.activeID {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(.teal)
-                                        .accessibilityLabel("Matrice aperta")
-                                }
+                            HStack(spacing: 9) {
+                                Image(systemName: "folder")
+                                    .foregroundStyle(.teal)
+                                Text(month.date.formatted(
+                                    .dateTime.month(.wide).year().locale(Locale(identifier: "it_IT"))
+                                ).capitalized)
+                                    .font(.headline)
+                                Spacer(minLength: 4)
+                                Text("\(month.count)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                             }
-                            .padding(.vertical, 5)
-                        }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(role: .destructive) {
-                                deletingID = matrix.id
-                            } label: {
-                                Label("Elimina", systemImage: "trash")
-                            }
-                            Button {
-                                renamingID = matrix.id
-                                titleDraft = matrix.title
-                            } label: {
-                                Label("Rinomina", systemImage: "pencil")
-                            }
-                            .tint(.indigo)
+                            .padding(.vertical, 8)
                         }
                     }
                 } header: {
-                    Text("Tutte le tue matrici · \(store.matrices.count)")
+                    Text("Matrici create · \(store.matrices.count)")
                 } footer: {
-                    Text("Le matrici si salvano automaticamente sul dispositivo. Puoi esportare un backup dal menu in alto.")
+                    Text("Tocca un mese e poi un giorno per aprire le matrici. I dati restano sul dispositivo; usa il menu in alto per esportare un backup.")
                 }
             }
-            .navigationTitle("Archivio ACT")
+            .navigationTitle("Le tue matrici")
             .navigationBarTitleDisplayMode(.large)
+            .onAppear {
+                guard !initializedTree else { return }
+                initializedTree = true
+                // Show the newest day on entry; every other month/day can be expanded.
+                if let latest = monthGroups.first {
+                    expandedMonths.insert(latest.id)
+                    if let latestDay = latest.days.first { expandedDays.insert(latestDay.id) }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Chiudi") { dismiss() }
@@ -86,9 +141,7 @@ struct ArchiveView: View {
                         } label: {
                             Label("Esporta backup JSON", systemImage: "square.and.arrow.up")
                         }
-                        Button {
-                            showImport = true
-                        } label: {
+                        Button { showImport = true } label: {
                             Label("Importa backup JSON", systemImage: "square.and.arrow.down")
                         }
                     } label: {
@@ -166,6 +219,46 @@ struct ArchiveView: View {
         }
     }
 
+    private func matrixRow(_ matrix: ACTMatrix) -> some View {
+        Button {
+            onSelect(matrix.id)
+        } label: {
+            HStack(spacing: 11) {
+                quadrantThumbnail
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(matrix.displayTitle)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                    Text("\(matrix.createdAt.formatted(date: .omitted, time: .shortened)) · \(matrix.itemCount) punti")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+                if matrix.id == store.activeID {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.teal)
+                        .accessibilityLabel("Matrice aperta")
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                deletingID = matrix.id
+            } label: {
+                Label("Elimina", systemImage: "trash")
+            }
+            Button {
+                renamingID = matrix.id
+                titleDraft = matrix.title
+            } label: {
+                Label("Rinomina", systemImage: "pencil")
+            }
+            .tint(.indigo)
+        }
+    }
+
     private var quadrantThumbnail: some View {
         VStack(spacing: 3) {
             HStack(spacing: 3) {
@@ -177,7 +270,7 @@ struct ArchiveView: View {
                 thumbnailCell.opacity(0.9)
             }
         }
-        .frame(width: 48, height: 48)
+        .frame(width: 38, height: 38)
         .accessibilityHidden(true)
     }
 

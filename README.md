@@ -1,65 +1,100 @@
-# ACT Matrix — app iOS privata e offline
+# ACT Matrix — iOS v1.1.0
 
-Progetto **SwiftUI + UIKit**, senza dipendenze esterne e senza server. Compatibile con iOS 17 o successivo. È pensato per essere compilato su GitHub Actions da Windows (o iPhone) e installato tramite SideStore, con lo stesso percorso utilizzato per StripStudio.
+Un'app iPhone/iPad **SwiftUI + UIKit**, privata, senza server né account, che salva automaticamente le matrici ACT sul dispositivo. Richiede iOS 17+. Il progetto include il workflow GitHub Actions che genera un IPA non firmato, per l'installazione tramite SideStore (come per StripStudio).
 
-## Funzioni della versione 1.0
+## Novità della versione 1.1
 
-- Nuova matrice con quattro riquadri vuoti (solo titoli di orientamento ACT).
-- Tocca un riquadro: esso si espande fino a coprire l'89% circa di larghezza/altezza, lasciando visibili strisce dei riquadri accanto.
-- La tastiera si apre automaticamente con il cursore su un elenco puntato.
-- Il tasto **Invio** crea un nuovo punto.
-- **Sopra la tastiera**: quattro piccoli pulsanti trasparenti in griglia 2×2, corrispondenti ai quattro riquadri. Toccarne uno cambia sezione e porta il cursore all'ultimo punto vuoto (o ne aggiunge uno).
-- Sopra la tastiera, a sinistra, pulsante **Nuova** per creare subito una matrice vuota.
-- Pulsante **griglia** in alto per tornare alla vista dei quattro riquadri.
-- **Archivio** in alto a sinistra: tutte le matrici, ordinate per data di creazione, con titolo, data/ora, conteggio dei punti, apertura, rinomina ed eliminazione.
-- Salvataggio automatico dopo ogni modifica, anche senza Internet.
-- Esportazione e importazione di backup JSON dall'archivio (l'importazione aggiunge matrici mancanti, non cancella quelle esistenti).
+### Tipi di voce sopra la tastiera
 
-### Disposizione ACT utilizzata
+Quando il cursore si trova su una voce, puoi assegnarle uno di questi tipi direttamente dalla barra sopra la tastiera:
+
+- **💭 Pensiero**
+- **🎇 Sensazione**
+- **🏞️ Immagine**
+- **🔲 Da fare** (etichetta visiva; non è ancora una checkbox spuntabile)
+
+La voce standard ha il simbolo **•**. Se premi di nuovo il pulsante del tipo già selezionato, la voce torna a un normale punto elenco.
+
+**Invio crea una nuova voce con la stessa icona della voce attuale**, anche quando inserisci una nuova voce in mezzo a un elenco. L'icona appartiene alla singola voce e viene salvata insieme al testo; spostare il cursore su un'altra voce aggiorna l'indicatore di selezione. Passando da un riquadro all'altro tramite la mini-matrice, si prepara un punto vuoto in fondo all'elenco, ereditando il tipo dell'ultimo punto se questo è già compilato.
+
+### Barra della tastiera
+
+La barra ha due file compatte. Il pulsante per mostrare tutta la matrice è centrato:
 
 ```text
-┌───────────────────────────┬───────────────────────────┐
-│ Azioni di allontanamento  │ Azioni di avvicinamento   │
-│ (Away moves)              │ (Toward moves)            │
-├───────────────────────────┼───────────────────────────┤
-│ Pensieri ed emozioni      │ Persone e valori         │
-│ (esperienze interiori)    │ (who / what matters)      │
-└───────────────────────────┴───────────────────────────┘
+                 💭   🎇   🏞️   🔲
+
+[ Nuova ]                [ ▦ ]                 [ □ □ ]
+                                              [ □ □ ]
 ```
 
-**Nota**: i titoli sono indicazioni di orientamento, non contenuti precompilati. I tuoi elenchi cominciano vuoti. La distribuzione segue la convenzione con comportamenti osservabili in alto e vissuti interiori in basso.
+- **Nuova**: crea una matrice ACT vuota.
+- **Quattro emoji**: cambiano il tipo della voce selezionata.
+- **Griglia (centro/destra)**: chiude l'editor/tastiera e mostra di nuovo i quattro riquadri.
+- **Quattro mini-quadrati trasparenti**: cambiano immediatamente il riquadro e aprono la scrittura su un nuovo punto (o sull'ultimo vuoto).
 
-## Installazione con GitHub e SideStore
+### Scorrimento dei riquadri
 
-1. Crea un repository GitHub, ad esempio `ACTMatrix`. Carica **il contenuto** di questa cartella nella radice del repository (non la cartella contenitore `ACTMatrix-iOS`). È fondamentale includere la cartella nascosta `.github/workflows`.
-2. Vai su GitHub → repository → **Actions** → **Build ACT Matrix iOS (unsigned IPA)** → **Run workflow**.
-3. Quando il workflow è verde, aprilo e scarica l'artefatto **ACTMatrix-unsigned-IPA**. GitHub fornisce un file `.zip` che contiene **ACTMatrix-unsigned.ipa**: estrai lo ZIP, non rinominare lo ZIP in IPA.
-4. Su iPhone, apri SideStore con LocalDevVPN attiva. Usa il pulsante **+** nella sezione delle app per selezionare `ACTMatrix-unsigned.ipa` dall'app File. SideStore firma l'IPA tramite il tuo account Apple e installa l'app.
-5. Per aggiornare, sostituisci i file del repository, esegui nuovamente il workflow e installa il nuovo IPA **sopra quello già presente**, senza disinstallare l'app: questo normalmente conserva i dati. Mantieni invariato il bundle ID (attualmente `app.actmatrix.mobile`).
+Nella vista 2×2 le dimensioni dei riquadri **restano fisse**, anche dopo aver aggiunto molte voci. Puoi scorrere **verticalmente all'interno di ciascun riquadro** per leggere le voci che non entrano. Tocca un riquadro per ingrandirlo, aprire la tastiera e scrivere su una voce nuova; i bordi degli altri riquadri restano parzialmente visibili. Anche l'editor ingrandito scorre quando l'elenco diventa lungo.
 
-### Note importanti
+### Home organizzata per data
 
-- **Questo archivio ZIP non è già un IPA**. L'IPA viene creato sul runner macOS di GitHub; qui non è possibile compilare un'app iOS per dispositivo o provare l'installazione reale.
-- Il bundle ID di ACT Matrix è diverso da quello di StripStudio (`app.stripstudio.mobile`): le app sono indipendenti.
-- La firma SideStore va rinnovata regolarmente (in genere ogni 7 giorni con account Apple gratuito).
-- Il limite SideStore può essere **3 app attive, SideStore inclusa**, con account gratuito.
-- I dati sono nel contenitore locale dell'app, non nei file del repository. Eliminare l'app può cancellarli. **Esporta un backup dall'archivio** prima di disinstallare o cambiare metodo di installazione.
-- Un backup JSON contiene i tuoi contenuti in chiaro. Conservalo in un luogo privato.
+Il menu **☰** in alto a sinistra apre la home a tutto schermo. Le matrici sono disposte come un albero espandibile/comprimibile:
 
-## Struttura
+```text
+▾ Ottobre 2026 (7)
+    ▾ Martedì 27 (3)
+        Matrice del 27 ott, 17:22
+        Matrice del 27 ott, 14:10
+        Matrice: Riunione
+    ▸ Lunedì 26 (4)
+▸ Settembre 2026 (5)
+```
+
+L'ordine è dal più recente al meno recente. Mese e giorno sono calcolati dalla **data e ora di creazione originale**, non dalle successive modifiche. All'apertura la home mostra espanso il giorno più recente; tutti i mesi e giorni si possono espandere e comprimere indipendentemente. Tocca una matrice per riaprirla; fai swipe verso sinistra su una voce dell'archivio per rinominare o eliminare.
+
+## Aggiornare da v1.0: i dati vengono mantenuti
+
+- Il **bundle identifier non è cambiato**: `app.actmatrix.mobile`.
+- Il formato dati v1.0 (`[[String]]`) viene letto automaticamente e convertito nel nuovo formato v1.1 (`[[ACTEntry]]`, con tipo di icona per voce).
+- I backup JSON esportati da v1.0 **possono essere importati anche nella v1.1**.
+- Installa l'IPA aggiornato **sopra la vecchia app**, senza cancellarla o disinstallarla, per conservare il contenitore dati.
+- **Consigliato:** prima di aggiornare, apri Home → `⋯` → **Esporta backup JSON**. Il backup contiene i contenuti in chiaro e va custodito in un posto privato.
+
+## Installazione tramite GitHub Actions + SideStore
+
+1. Carica **il contenuto** della cartella `ACTMatrix-iOS`, non la cartella contenitore, nella radice del tuo repository GitHub esistente. Sostituisci i file `.swift`, `ACTMatrix.xcodeproj/project.pbxproj`, `README.md` e gli altri presenti; mantieni la cartella nascosta `.github/workflows/build-ios.yml`.
+2. GitHub → repository → **Actions** → **Build ACT Matrix iOS (unsigned IPA)** → **Run workflow**.
+3. Quando il workflow termina con successo, scarica l'artefatto **ACTMatrix-unsigned-IPA**, estrailo e trova `ACTMatrix-unsigned.ipa`.
+4. Su iPhone attiva **LocalDevVPN**, apri **SideStore** → **+** → scegli l'IPA nell'app **File**.
+5. Installa **come aggiornamento**, senza prima eliminare la vecchia ACT Matrix. Rinnova periodicamente le firme in SideStore.
+
+Non è necessario Xcode sul PC Windows, ma il runner GitHub macOS compila il progetto con Xcode. Il file ZIP distribuito qui **non è un IPA**.
+
+## Struttura del progetto
 
 ```text
 ACTMatrix.xcodeproj/project.pbxproj
 ACTMatrix/ACTMatrixApp.swift
-ACTMatrix/MatrixStore.swift
-ACTMatrix/MatrixView.swift
-ACTMatrix/BulletedEditor.swift
-ACTMatrix/MatrixKeyboardBar.swift
-ACTMatrix/ArchiveView.swift
-ACTMatrix/Assets.xcassets/AppIcon.appiconset/
+ACTMatrix/MatrixStore.swift           # tipi per voce, salvataggio e migrazione v1
+ACTMatrix/MatrixView.swift            # matrice 2x2, zoom e anteprima scorrevole
+ACTMatrix/BulletedEditor.swift        # editor UIKit e propagazione dell'icona con Invio
+ACTMatrix/MatrixKeyboardBar.swift     # comandi sopra la tastiera
+ACTMatrix/ArchiveView.swift          # home ad albero mese -> giorno -> matrici
+ACTMatrix/Assets.xcassets/
 .github/workflows/build-ios.yml
 ```
 
-### Modifiche future
+## Verifiche e limiti
 
-Per personalizzare etichette, colori e navigazione: `MatrixView.swift` e `MatrixKeyboardBar.swift`. Per formato di salvataggio: `MatrixStore.swift`. Per comportamento dell'elenco puntato: `BulletedEditor.swift`.
+- Verificata localmente la sintassi Swift di tutti i file.
+- Testata con Swift la migrazione di un backup di v1.0, la decodifica/codifica del formato v1.1 e l'interpretazione delle quattro emoji.
+- Non è possibile eseguire qui l'interfaccia iOS o `xcodebuild`: **il primo build reale si verifica nel workflow GitHub**, ed eventuali errori del compiler iOS devono essere corretti usando il suo log.
+- L'icona 🔲 indica un'azione da fare ma non gestisce ancora lo stato completato; per le altre emoji si tratta di classificazioni visive, non riconoscimento automatico del contenuto.
+
+
+## Correzione 1.1.1 (27 ottobre 2026)
+
+Corretto l'errore di compilazione Swift in `ACTMatrix/MatrixStore.swift` nell'inizializzatore di `MatrixStore` (lettura di `matrices` prima che `activeID` sia inizializzato). Non vengono modificati il bundle identifier, il formato dei salvataggi o il workflow GitHub Actions.
+
+Se il repository contiene gia la versione 1.1.0, e sufficiente sostituire il solo file `ACTMatrix/MatrixStore.swift`, poi rieseguire il workflow dalla scheda **Actions**.

@@ -1,20 +1,25 @@
 import UIKit
 
-/// This is the native iOS keyboard accessory: it stays directly ABOVE the keyboard.
+/// A compact native accessory that follows the iOS keyboard.
+/// Upper row: [💭 🎇 🏞️ 🔲]. Lower row: [New] [show all CENTERED] [2x2].
 final class MatrixKeyboardBar: UIView {
     var onNavigate: ((Int) -> Void)?
     var onNew: (() -> Void)?
+    var onShowAll: (() -> Void)?
+    var onChooseKind: ((ACTEntryKind) -> Void)?
 
     private var quadrantButtons: [UIButton] = []
+    private var kindButtons: [ACTEntryKind: UIButton] = [:]
     private var currentQuadrant: Int
+    private var selectedKind: ACTEntryKind = .bullet
 
     override var intrinsicContentSize: CGSize {
-        CGSize(width: UIView.noIntrinsicMetric, height: 70)
+        CGSize(width: UIView.noIntrinsicMetric, height: 94)
     }
 
     init(currentQuadrant: Int) {
         self.currentQuadrant = currentQuadrant
-        super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 70))
+        super.init(frame: CGRect(x: 0, y: 0, width: 0, height: 94))
         setup()
     }
 
@@ -44,28 +49,51 @@ final class MatrixKeyboardBar: UIView {
 
         let newButton = UIButton(type: .system)
         newButton.setImage(UIImage(systemName: "plus.square.on.square"), for: .normal)
-        newButton.setTitle("  Nuova", for: .normal)
-        newButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
         newButton.tintColor = .label
-        newButton.contentHorizontalAlignment = .leading
-        newButton.accessibilityLabel = "Crea nuova matrice ACT"
+        newButton.accessibilityLabel = "Crea una nuova matrice vuota"
         newButton.addTarget(self, action: #selector(createNew), for: .touchUpInside)
+        newButton.translatesAutoresizingMaskIntoConstraints = false
+        newButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        newButton.heightAnchor.constraint(equalToConstant: 42).isActive = true
 
-        let spacer = UIView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let types = UIStackView()
+        types.axis = .horizontal
+        types.alignment = .center
+        types.distribution = .fillEqually
+        types.spacing = 2
+        for kind in ACTEntryKind.allCases where kind != .bullet {
+            let button = UIButton(type: .system)
+            button.setTitle(kind.symbol, for: .normal)
+            button.titleLabel?.font = .systemFont(ofSize: 21)
+            button.layer.cornerRadius = 7
+            button.layer.borderWidth = 1
+            button.layer.borderColor = UIColor.clear.cgColor
+            button.accessibilityLabel = "Tipo voce: \(kind.accessibilityName)"
+            button.addTarget(self, action: #selector(chooseKind(_:)), for: .touchUpInside)
+            button.tag = kindIndex(kind)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            button.widthAnchor.constraint(equalToConstant: 32).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 38).isActive = true
+            kindButtons[kind] = button
+            types.addArrangedSubview(button)
+        }
 
-        let caption = UILabel()
-        caption.text = "VAI A"
-        caption.textColor = .secondaryLabel
-        caption.font = .systemFont(ofSize: 10, weight: .semibold)
+        let showAllButton = UIButton(type: .system)
+        showAllButton.setImage(UIImage(systemName: "square.grid.2x2"), for: .normal)
+        showAllButton.tintColor = .label
+        showAllButton.accessibilityLabel = "Mostra tutti e quattro i riquadri"
+        showAllButton.addTarget(self, action: #selector(showAll), for: .touchUpInside)
+        showAllButton.translatesAutoresizingMaskIntoConstraints = false
+        showAllButton.widthAnchor.constraint(equalToConstant: 34).isActive = true
+        showAllButton.heightAnchor.constraint(equalToConstant: 42).isActive = true
 
         let grid = UIStackView()
         grid.axis = .vertical
-        grid.spacing = 3
+        grid.spacing = 2
         for row in 0..<2 {
             let line = UIStackView()
             line.axis = .horizontal
-            line.spacing = 3
+            line.spacing = 2
             for column in 0..<2 {
                 let quadrant = row * 2 + column
                 let button = UIButton(type: .custom)
@@ -73,8 +101,8 @@ final class MatrixKeyboardBar: UIView {
                 button.layer.cornerRadius = 5
                 button.layer.borderWidth = 1
                 button.translatesAutoresizingMaskIntoConstraints = false
-                button.widthAnchor.constraint(equalToConstant: 28).isActive = true
-                button.heightAnchor.constraint(equalToConstant: 28).isActive = true
+                button.widthAnchor.constraint(equalToConstant: 26).isActive = true
+                button.heightAnchor.constraint(equalToConstant: 26).isActive = true
                 button.accessibilityLabel = [
                     "Azioni di allontanamento", "Azioni di avvicinamento",
                     "Pensieri ed emozioni", "Persone e valori"
@@ -86,20 +114,41 @@ final class MatrixKeyboardBar: UIView {
             grid.addArrangedSubview(line)
         }
 
-        let row = UIStackView(arrangedSubviews: [newButton, spacer, caption, grid])
-        row.axis = .horizontal
-        row.spacing = 12
-        row.alignment = .center
-        row.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(row)
+        // Two lightweight rows prevent crowding on narrow iPhones and keep the
+        // show-all control geometrically CENTERED, as requested.
+        for view in [types, newButton, showAllButton, grid] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(view)
+        }
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 20),
-            row.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -22),
-            row.centerYAnchor.constraint(equalTo: centerYAnchor),
-            row.heightAnchor.constraint(equalToConstant: 60),
-            newButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 90)
+            types.centerXAnchor.constraint(equalTo: centerXAnchor),
+            types.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            types.heightAnchor.constraint(equalToConstant: 38),
+
+            newButton.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            newButton.centerYAnchor.constraint(equalTo: topAnchor, constant: 66),
+
+            showAllButton.centerXAnchor.constraint(equalTo: centerXAnchor),
+            showAllButton.centerYAnchor.constraint(equalTo: topAnchor, constant: 66),
+
+            grid.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            grid.centerYAnchor.constraint(equalTo: topAnchor, constant: 66)
         ])
         selectQuadrant(currentQuadrant)
+        selectKind(.bullet)
+    }
+
+    private func kindIndex(_ kind: ACTEntryKind) -> Int {
+        ACTEntryKind.allCases.firstIndex(of: kind) ?? 0
+    }
+
+    func selectKind(_ selected: ACTEntryKind) {
+        selectedKind = selected
+        for (kind, button) in kindButtons {
+            let active = kind == selected
+            button.layer.borderColor = (active ? UIColor.systemTeal : UIColor.clear).cgColor
+            button.backgroundColor = active ? UIColor.systemTeal.withAlphaComponent(0.16) : .clear
+        }
     }
 
     func selectQuadrant(_ selected: Int) {
@@ -114,6 +163,13 @@ final class MatrixKeyboardBar: UIView {
         }
     }
 
+    @objc private func chooseKind(_ sender: UIButton) {
+        guard ACTEntryKind.allCases.indices.contains(sender.tag) else { return }
+        let chosen = ACTEntryKind.allCases[sender.tag]
+        // Tap an already-selected type to go back to a plain bullet.
+        onChooseKind?(chosen == selectedKind ? .bullet : chosen)
+    }
     @objc private func navigate(_ sender: UIButton) { onNavigate?(sender.tag) }
     @objc private func createNew() { onNew?() }
+    @objc private func showAll() { onShowAll?() }
 }

@@ -59,7 +59,7 @@ struct MatrixView: View {
             .padding(.bottom, 10)
         }
         .background(Color(uiColor: .systemGroupedBackground))
-        .sheet(isPresented: $showArchive) {
+        .fullScreenCover(isPresented: $showArchive) {
             ArchiveView { matrixID in
                 store.activate(matrixID)
                 selectedQuadrant = nil
@@ -92,13 +92,14 @@ struct MatrixView: View {
     private var topBar: some View {
         HStack(alignment: .center, spacing: 10) {
             Button {
+                selectedQuadrant = nil  // Dismiss keyboard before entering the home screen.
                 showArchive = true
             } label: {
-                Image(systemName: "square.stack.3d.up")
+                Image(systemName: "line.3.horizontal")
                     .font(.system(size: 19, weight: .medium))
                     .frame(width: 38, height: 44)
             }
-            .accessibilityLabel("Archivio matrici")
+            .accessibilityLabel("Home: tutte le matrici")
 
             Button {
                 titleDraft = store.activeMatrix.title
@@ -159,7 +160,7 @@ struct MatrixView: View {
 
     private func tile(_ quadrant: Int) -> some View {
         let selected = selectedQuadrant == quadrant
-        let entries = store.lines(in: quadrant)
+        let entries = store.entries(in: quadrant)
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 19, style: .continuous)
                 .fill(Color(uiColor: .secondarySystemGroupedBackground))
@@ -188,16 +189,17 @@ struct MatrixView: View {
 
                 if selected {
                     BulletedEditor(
-                        lines: Binding(
-                            get: { store.lines(in: quadrant) },
-                            set: { store.updateLines($0, in: quadrant) }
+                        entries: Binding(
+                            get: { store.entries(in: quadrant) },
+                            set: { store.updateEntries($0, in: quadrant) }
                         ),
                         focusToken: focusToken,
                         currentQuadrant: quadrant,
                         onNavigate: { destination in
                             openQuadrant(destination, addBlank: true)
                         },
-                        onNew: createNewMatrix
+                        onNew: createNewMatrix,
+                        onShowAll: { selectedQuadrant = nil }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -206,16 +208,6 @@ struct MatrixView: View {
             }
             .padding(13)
 
-            if !selected {
-                Color.clear
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        openQuadrant(quadrant, addBlank: false)
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Apri \(headings[quadrant])")
-                    .accessibilityAddTraits(.isButton)
-            }
         }
         .overlay {
             RoundedRectangle(cornerRadius: 19, style: .continuous)
@@ -225,11 +217,15 @@ struct MatrixView: View {
                 )
         }
         .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
+        // Simultaneous tap doesn't steal the vertical drag from the inner ScrollView.
+        .simultaneousGesture(TapGesture().onEnded {
+            if !selected { openQuadrant(quadrant, addBlank: true) }
+        })
     }
 
     @ViewBuilder
-    private func preview(_ lines: [String]) -> some View {
-        let nonempty = lines.filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+    private func preview(_ entries: [ACTEntry]) -> some View {
+        let nonempty = entries.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty }
         if nonempty.isEmpty {
             Text("Tocca per scrivere…")
                 .font(.system(size: 13))
@@ -240,8 +236,8 @@ struct MatrixView: View {
                 VStack(alignment: .leading, spacing: 7) {
                     ForEach(nonempty.indices, id: \.self) { entryIndex in
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text("•")
-                            Text(nonempty[entryIndex])
+                            Text(nonempty[entryIndex].kind.symbol)
+                            Text(nonempty[entryIndex].text)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         .font(.system(size: 13))
@@ -251,7 +247,6 @@ struct MatrixView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .scrollIndicators(.hidden)
-            .allowsHitTesting(false)
         }
     }
 
