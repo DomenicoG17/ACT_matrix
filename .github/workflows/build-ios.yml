@@ -1,0 +1,56 @@
+
+name: Build ACT Matrix iOS (unsigned IPA)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build native iOS app (without signing)
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project ACTMatrix.xcodeproj \
+            -scheme ACTMatrix \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/ACTMatrixDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build
+
+      - name: Package unsigned IPA for SideStore
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/ACTMatrixDerivedData/Build/Products/Release-iphoneos/ACTMatrix.app"
+          test -d "$APP"
+          mkdir -p "$RUNNER_TEMP/package/Payload" dist
+          ditto "$APP" "$RUNNER_TEMP/package/Payload/ACTMatrix.app"
+          cd "$RUNNER_TEMP/package"
+          /usr/bin/zip -qry "$GITHUB_WORKSPACE/dist/ACTMatrix-unsigned.ipa" Payload
+          unzip -l "$GITHUB_WORKSPACE/dist/ACTMatrix-unsigned.ipa" | grep 'Payload/ACTMatrix.app/Info.plist'
+
+      - name: Upload installable IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: ACTMatrix-unsigned-IPA
+          path: dist/ACTMatrix-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30
