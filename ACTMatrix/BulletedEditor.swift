@@ -86,6 +86,7 @@ struct BulletedEditor: UIViewRepresentable {
     let onNew: () -> Void
     let onShowAll: () -> Void
     let onAdjustRecurrence: (Int, Int) -> Void
+    let onOpenTodo: (UUID) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -103,6 +104,11 @@ struct BulletedEditor: UIViewRepresentable {
         textView.spellCheckingType = .yes
         textView.text = Self.displayText(entries)
         textView.delegate = context.coordinator
+        let linkTap = UITapGestureRecognizer(target: context.coordinator,
+                                             action: #selector(Coordinator.openTodoOnTap(_:)))
+        linkTap.delegate = context.coordinator
+        linkTap.cancelsTouchesInView = true
+        textView.addGestureRecognizer(linkTap)
         context.coordinator.textView = textView
         textView.onLayout = { [weak coordinator = context.coordinator] in
             coordinator?.layoutCounters()
@@ -122,6 +128,9 @@ struct BulletedEditor: UIViewRepresentable {
         accessory.onChooseKind = { [weak coordinator = context.coordinator] kind in
             coordinator?.setKindOfCurrentEntry(kind)
         }
+        accessory.onIndent = { [weak coordinator = context.coordinator] delta in
+            coordinator?.adjustIndent(delta)
+        }
         textView.inputAccessoryView = accessory
         context.coordinator.accessory = accessory
         return textView
@@ -138,6 +147,7 @@ struct BulletedEditor: UIViewRepresentable {
             let end = (display as NSString).length
             textView.selectedRange = NSRange(location: min(oldSelection.location, end), length: 0)
         }
+        context.coordinator.styleTodoLinks()
         context.coordinator.layoutCounters()
         context.coordinator.refreshSelectedKind()
 
@@ -156,11 +166,11 @@ struct BulletedEditor: UIViewRepresentable {
 
     static func displayText(_ entries: [ACTEntry]) -> String {
         (entries.isEmpty ? [ACTEntry()] : entries)
-            .map { $0.kind.prefix + $0.text }
+            .map(\.displayLine)
             .joined(separator: "\n")
     }
 
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         var parent: BulletedEditor
         weak var accessory: MatrixKeyboardBar?
         weak var textView: UITextView?
@@ -182,32 +192,134 @@ struct BulletedEditor: UIViewRepresentable {
             return (lineRange, clean)
         }
 
+        private func selectedLineIndex(_ view: UITextView) -> Int {
+            let raw = (view.text ?? "") as NSString
+            let location = min(view.selectedRange.location, raw.length)
+            return raw.substring(to: location).filter { $0 == "\n" }.count
+        }
+
         func refreshSelectedKind() {
             guard let view = textView else { return }
-            let (_, line) = currentLine(in: view)
-            accessory?.selectKind(ACTEntryKind.parse(line).kind)
+            let index = selectedLineIndex(view)
+            accessory?.selectKind(parent.entries.indices.contains(index)
+                ? parent.entries[index].kind : .bullet)
         }
 
         func setKindOfCurrentEntry(_ kind: ACTEntryKind) {
             guard let view = textView else { return }
-            let (lineRange, oldLine) = currentLine(in: view)
-            let oldEntry = ACTEntryKind.parse(oldLine)
-            let newLine = kind.prefix + oldEntry.text
-            let endsWithNewline = (view.text as NSString).substring(with: lineRange).hasSuffix("\n")
-            let replacement = newLine + (endsWithNewline ? "\n" : "")
-            let oldPrefixLength = (oldEntry.kind.prefix as NSString).length
-            let newPrefixLength = (kind.prefix as NSString).length
-            let oldPosition = view.selectedRange.location - lineRange.location
-            let bodyOffset = max(0, oldPosition - oldPrefixLength)
+            let index = selectedLineIndex(view)
+            guard parent.entries.indices.contains(index) else { return }
+            var updated = parent.entries
+            let oldPrefix = updated[index].displayPrefix
+            updated[index].kind = kind
+            let newPrefix = updated[index].displayPrefix
+            let (lineRange, _) = currentLine(in: view)
+            let relative = max(0, view.selectedRange.location - lineRange.location
+                                    - (oldPrefix as NSString).length)
             pendingEdit = nil
-            view.text = (view.text as NSString).replacingCharacters(in: lineRange, with: replacement)
-            let position = lineRange.location + newPrefixLength
-                + min(bodyOffset, (oldEntry.text as NSString).length)
-            view.selectedRange = NSRange(location: position, length: 0)
-            textViewDidChange(view)
-            accessory?.selectKind(kind)
+            parent.entries = updated
+            view.text = BulletedEditor.displayText(updated)
+            view.selectedRange = NSRange(location: lineRange.location
+                + (newPrefix as NSString).length
+                + min(relative, (updated[index].text as NSString).length), length: 0)
+            styleTodoLinks()
+            refreshSelectedKind()
+            layoutCounters()
             view.becomeFirstResponder()
             view.scrollRangeToVisible(view.selectedRange)
+        }
+
+        func adjustIndent(_ delta: Int) {
+            guard let view = textView else { return }
+            let index = selectedLineIndex(view)
+            guard parent.entries.indices.contains(index) else { return }
+            var updated = parent.entries
+            let original = updated[index].indentLevel
+            let next = max(0, min(4, original + delta))
+            guard original != next else { return }
+            let line = currentLine(in: view).0
+            let before = (updated[index].displayPrefix as NSString).length
+            let relative = max(0, view.selectedRange.location - line.location - before)
+            updated[index].indentLevel = next
+            pendingEdit = nil
+            parent.entries = updated
+            view.text = BulletedEditor.displayText(updated)
+            view.selectedRange = NSRange(location: line.location
+                + (updated[index].displayPrefix as NSString).length
+                + min(relative, (updated[index].text as NSString).length), length: 0)
+            styleTodoLinks()
+            layoutCounters()
+            view.becomeFirstResponder()
+            view.scrollRangeToVisible(view.selectedRange)
+        }
+
+        func styleTodoLinks() {
+            guard let view = textView else { return }
+            let fullText = (view.text ?? "") as NSString
+            let storage = view.textStorage
+            guard storage.length == fullText.length else { return }
+            let selection = view.selectedRange
+            storage.beginEditing()
+            let range = NSRange(location: 0, length: fullText.length)
+            storage.addAttributes([.foregroundColor: UIColor.label,
+                                   .underlineStyle: 0], range: range)
+            var offset = 0
+            for entry in parent.entries {
+                let lineLength = (entry.displayLine as NSString).length
+                if entry.kind == .todo && !entry.text.isEmpty {
+                    let beginning = offset + (entry.displayPrefix as NSString).length
+                    let length = (entry.text as NSString).length
+                    if beginning + length <= fullText.length {
+                        storage.addAttributes([.foregroundColor: UIColor.systemBlue,
+                                               .underlineStyle: NSUnderlineStyle.single.rawValue],
+                                              range: NSRange(location: beginning, length: length))
+                    }
+                }
+                offset += lineLength + 1
+            }
+            storage.endEditing()
+            if NSMaxRange(selection) <= fullText.length { view.selectedRange = selection }
+        }
+
+        private func tappedTodoID(at location: CGPoint, in view: UITextView) -> UUID? {
+            guard location.x >= 0,
+                  location.x < view.bounds.width - 83 else { return nil }
+            let position = CGPoint(x: location.x - view.textContainerInset.left,
+                                   y: location.y - view.textContainerInset.top)
+            let manager = view.layoutManager
+            let glyph = manager.glyphIndex(for: position, in: view.textContainer)
+            guard glyph < manager.numberOfGlyphs else { return nil }
+            let charIndex = manager.characterIndexForGlyph(at: glyph)
+            let text = (view.text ?? "") as NSString
+            guard charIndex < text.length else { return nil }
+            let preceding = text.substring(to: charIndex)
+            let index = preceding.filter { $0 == "\n" }.count
+            guard parent.entries.indices.contains(index),
+                  parent.entries[index].kind == .todo,
+                  !parent.entries[index].text.isEmpty else { return nil }
+            let fragment = manager.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil)
+            guard position.y >= fragment.minY - 3,
+                  position.y <= fragment.maxY + 3,
+                  position.x >= fragment.minX,
+                  position.x <= fragment.maxX + 3 else { return nil }
+            let lineRange = text.lineRange(for: NSRange(location: charIndex, length: 0))
+            let bodyStart = lineRange.location
+                + (parent.entries[index].displayPrefix as NSString).length
+            guard charIndex >= bodyStart else { return nil }
+            return parent.entries[index].id
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldReceive touch: UITouch) -> Bool {
+            guard let view = textView else { return false }
+            return tappedTodoID(at: touch.location(in: view), in: view) != nil
+        }
+
+        @objc func openTodoOnTap(_ gesture: UITapGestureRecognizer) {
+            guard let view = textView,
+                  let id = tappedTodoID(at: gesture.location(in: view), in: view) else { return }
+            view.resignFirstResponder()
+            parent.onOpenTodo(id)
         }
 
         func textView(_ textView: UITextView,
@@ -226,8 +338,10 @@ struct BulletedEditor: UIViewRepresentable {
             if text == "\n" {
                 let lineRange = raw.lineRange(for: NSRange(location: range.location, length: 0))
                 let line = raw.substring(with: lineRange)
-                let kind = ACTEntryKind.parse(line).kind
-                let insertion = "\n" + kind.prefix
+                let index = prior.filter { $0 == "\n" }.count
+                let existing = parent.entries.indices.contains(index)
+                    ? parent.entries[index] : ACTEntry()
+                let insertion = "\n" + existing.displayPrefix
                 textView.text = raw.replacingCharacters(in: range, with: insertion)
                 textView.selectedRange = NSRange(
                     location: range.location + (insertion as NSString).length,
@@ -245,9 +359,7 @@ struct BulletedEditor: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            let parsed = (textView.text ?? "")
-                .components(separatedBy: "\n")
-                .map { ACTEntryKind.parse($0) }
+            let lines = (textView.text ?? "").components(separatedBy: "\n")
             let previous = parent.entries
             let change = pendingEdit
             pendingEdit = nil
@@ -258,17 +370,17 @@ struct BulletedEditor: UIViewRepresentable {
             if let change = change,
                change.addedBreaks == 1, change.removedBreaks == 0,
                previous.indices.contains(change.startLine),
-               parsed.indices.contains(change.startLine + 1),
-               parsed.count == previous.count + 1 {
-                let blank = parsed[change.startLine]
-                let moved = parsed[change.startLine + 1]
+               lines.indices.contains(change.startLine + 1),
+               lines.count == previous.count + 1 {
                 let original = previous[change.startLine]
+                let blank = ACTEntry.parseLine(lines[change.startLine], fallback: original)
+                let moved = ACTEntry.parseLine(lines[change.startLine + 1], fallback: original)
                 insertedBeforeExisting = blank.text.isEmpty
                     && moved.text == original.text && moved.kind == original.kind
             } else {
                 insertedBeforeExisting = false
             }
-            let updated: [ACTEntry] = parsed.enumerated().map { index, newEntry in
+            let updated: [ACTEntry] = lines.enumerated().map { index, rawLine in
                 let oldIndex: Int?
                 if let change = change {
                     if insertedBeforeExisting && index == change.startLine {
@@ -285,16 +397,21 @@ struct BulletedEditor: UIViewRepresentable {
                 } else {
                     oldIndex = index // icon replacement or an autocorrect update
                 }
-                let count: Int
-                if let oldIndex = oldIndex, previous.indices.contains(oldIndex) {
-                    count = previous[oldIndex].recurrenceCount
-                } else {
-                    count = 0
+                let oldEntry: ACTEntry? = oldIndex.flatMap {
+                    previous.indices.contains($0) ? previous[$0] : nil
                 }
-                return ACTEntry(text: newEntry.text, kind: newEntry.kind,
-                                recurrenceCount: count)
+                // New lines inherit type and nesting, but not note or count.
+                let inherited = oldEntry ?? (index > 0 ? previous[min(index - 1, previous.count - 1)] : ACTEntry())
+                var result = ACTEntry.parseLine(rawLine, fallback: inherited)
+                if let oldEntry = oldEntry {
+                    result.id = oldEntry.id
+                    result.recurrenceCount = oldEntry.recurrenceCount
+                    result.note = oldEntry.note
+                }
+                return result
             }
             if updated != previous { parent.entries = updated }
+            styleTodoLinks()
             refreshSelectedKind()
             layoutCounters()
         }

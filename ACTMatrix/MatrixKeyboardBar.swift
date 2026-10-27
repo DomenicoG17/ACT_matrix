@@ -7,6 +7,7 @@ final class MatrixKeyboardBar: UIView {
     var onNew: (() -> Void)?
     var onShowAll: (() -> Void)?
     var onChooseKind: ((ACTEntryKind) -> Void)?
+    var onIndent: ((Int) -> Void)?
 
     private var quadrantButtons: [UIButton] = []
     private var kindButtons: [ACTEntryKind: UIButton] = [:]
@@ -78,6 +79,21 @@ final class MatrixKeyboardBar: UIView {
             types.addArrangedSubview(button)
         }
 
+        let indent = UIButton(type: .system)
+        indent.setTitle("↳", for: .normal)
+        indent.titleLabel?.font = .systemFont(ofSize: 26, weight: .medium)
+        indent.tintColor = .label
+        indent.accessibilityLabel = "Rientra la voce, crea una sottovoce"
+        indent.addTarget(self, action: #selector(indentTapped), for: .touchUpInside)
+        indent.translatesAutoresizingMaskIntoConstraints = false
+        let outdent = UIButton(type: .system)
+        outdent.setTitle("⇤", for: .normal)
+        outdent.titleLabel?.font = .systemFont(ofSize: 23, weight: .medium)
+        outdent.tintColor = .secondaryLabel
+        outdent.accessibilityLabel = "Riduci rientro della voce"
+        outdent.addTarget(self, action: #selector(outdentTapped), for: .touchUpInside)
+        outdent.translatesAutoresizingMaskIntoConstraints = false
+
         let showAllButton = UIButton(type: .system)
         showAllButton.setImage(UIImage(systemName: "square.grid.2x2"), for: .normal)
         showAllButton.tintColor = .label
@@ -116,7 +132,7 @@ final class MatrixKeyboardBar: UIView {
 
         // Two lightweight rows prevent crowding on narrow iPhones and keep the
         // show-all control geometrically CENTERED, as requested.
-        for view in [types, newButton, showAllButton, grid] {
+        for view in [types, newButton, showAllButton, grid, indent, outdent] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -124,6 +140,14 @@ final class MatrixKeyboardBar: UIView {
             types.centerXAnchor.constraint(equalTo: centerXAnchor),
             types.topAnchor.constraint(equalTo: topAnchor, constant: 1),
             types.heightAnchor.constraint(equalToConstant: 38),
+            outdent.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 18),
+            outdent.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            outdent.widthAnchor.constraint(equalToConstant: 36),
+            outdent.heightAnchor.constraint(equalToConstant: 38),
+            indent.trailingAnchor.constraint(equalTo: safeAreaLayoutGuide.trailingAnchor, constant: -18),
+            indent.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            indent.widthAnchor.constraint(equalToConstant: 36),
+            indent.heightAnchor.constraint(equalToConstant: 38),
 
             newButton.leadingAnchor.constraint(equalTo: safeAreaLayoutGuide.leadingAnchor, constant: 12),
             newButton.centerYAnchor.constraint(equalTo: topAnchor, constant: 66),
@@ -162,6 +186,9 @@ final class MatrixKeyboardBar: UIView {
                 : UIColor.clear
         }
     }
+
+    @objc private func indentTapped() { onIndent?(1) }
+    @objc private func outdentTapped() { onIndent?(-1) }
 
     @objc private func chooseKind(_ sender: UIButton) {
         guard ACTEntryKind.allCases.indices.contains(sender.tag) else { return }

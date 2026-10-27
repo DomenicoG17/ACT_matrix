@@ -41,29 +41,61 @@ enum ACTEntryKind: String, Codable, CaseIterable {
     }
 }
 
-struct ACTEntry: Codable, Equatable {
+struct ACTEntry: Identifiable, Codable, Equatable {
+    // Persistent IDs let counters, notes and custom ordering survive text edits.
+    var id: UUID = UUID()
     var text: String = ""
     var kind: ACTEntryKind = .bullet
-    // Number of times this experience has returned, tracked independently
-    // for every entry. Old on-device files and backups have no such key.
     var recurrenceCount: Int = 0
+    var indentLevel: Int = 0
+    var note: String = ""
 
-    init(text: String = "", kind: ACTEntryKind = .bullet, recurrenceCount: Int = 0) {
+    init(id: UUID = UUID(), text: String = "", kind: ACTEntryKind = .bullet,
+         recurrenceCount: Int = 0, indentLevel: Int = 0, note: String = "") {
+        self.id = id
         self.text = text
         self.kind = kind
         self.recurrenceCount = max(0, recurrenceCount)
+        self.indentLevel = max(0, min(4, indentLevel))
+        self.note = note
     }
 
     private enum CodingKeys: String, CodingKey {
-        case text, kind, recurrenceCount
+        case id, text, kind, recurrenceCount, indentLevel, note
     }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         text = try values.decodeIfPresent(String.self, forKey: .text) ?? ""
         kind = try values.decodeIfPresent(ACTEntryKind.self, forKey: .kind) ?? .bullet
-        recurrenceCount = max(0,
-            try values.decodeIfPresent(Int.self, forKey: .recurrenceCount) ?? 0)
+        recurrenceCount = max(0, try values.decodeIfPresent(Int.self, forKey: .recurrenceCount) ?? 0)
+        indentLevel = max(0, min(4, try values.decodeIfPresent(Int.self, forKey: .indentLevel) ?? 0))
+        note = try values.decodeIfPresent(String.self, forKey: .note) ?? ""
+    }
+
+    var displayPrefix: String {
+        let indent = String(repeating: "    ", count: indentLevel)
+        return indent + (indentLevel > 0 ? "↳ " : kind.prefix)
+    }
+
+    var displayLine: String { displayPrefix + text }
+
+    // Parse both native icons and the L-shaped nested marker.
+    // For a nested item its original type (e.g. to-do) is retained in its model.
+    static func parseLine(_ line: String, fallback: ACTEntry? = nil) -> ACTEntry {
+        var text = line
+        var level = 0
+        while text.hasPrefix("    ") && level < 4 {
+            text.removeFirst(4)
+            level += 1
+        }
+        if text.hasPrefix("↳ ") {
+            text.removeFirst(2)
+            return ACTEntry(text: text, kind: fallback?.kind ?? .bullet, indentLevel: max(1, level))
+        }
+        let parsed = ACTEntryKind.parse(text, fallback: fallback?.kind ?? .bullet)
+        return ACTEntry(text: parsed.text, kind: parsed.kind, indentLevel: level)
     }
 }
 
@@ -74,13 +106,15 @@ struct ACTMatrix: Identifiable, Codable, Equatable {
     var updatedAt: Date = Date()
     // Reading order: top-left, top-right, bottom-left, bottom-right.
     var quadrants: [[ACTEntry]] = (0..<4).map { _ in [ACTEntry()] }
+    // Custom order applies only to the to-do screen, never the original matrix.
+    var todoOrder: [UUID] = []
 
     init() {}
 
     // Seamlessly open BOTH the v1 [[String]] format and the new v2 [[ACTEntry]] format.
     // The same decoder is used for on-device data and imported JSON backups.
     private enum CodingKeys: String, CodingKey {
-        case id, title, createdAt, updatedAt, quadrants
+        case id, title, createdAt, updatedAt, quadrants, todoOrder
     }
 
     init(from decoder: Decoder) throws {
@@ -89,6 +123,7 @@ struct ACTMatrix: Identifiable, Codable, Equatable {
         title = try container.decodeIfPresent(String.self, forKey: .title) ?? ""
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
+        todoOrder = try container.decodeIfPresent([UUID].self, forKey: .todoOrder) ?? []
         if let current = try? container.decode([[ACTEntry]].self, forKey: .quadrants) {
             quadrants = current
         } else if let legacy = try? container.decode([[String]].self, forKey: .quadrants) {
@@ -119,11 +154,20 @@ struct ACTMatrix: Identifiable, Codable, Equatable {
         for index in 0..<4 where quadrants[index].isEmpty {
             quadrants[index] = [ACTEntry()]
         }
+        // Prevent a rare duplicate ID in an imported or manually edited backup.
+        var seen = Set<UUID>()
+        for q in quadrants.indices {
+            for i in quadrants[q].indices {
+                if !seen.insert(quadrants[q][i].id).inserted {
+                    quadrants[q][i].id = UUID()
+                }
+            }
+        }
     }
 }
 
 struct MatrixBackup: Codable {
-    var version: Int = 3
+    var version: Int = 4
     var matrices: [ACTMatrix]
     var activeID: UUID
 }
@@ -208,10 +252,73 @@ final class MatrixStore: ObservableObject {
               let index = matrices.firstIndex(where: { $0.id == activeID }) else { return }
         let last = matrices[index].quadrants[quadrant].last ?? ACTEntry()
         if !last.text.isEmpty {
-            matrices[index].quadrants[quadrant].append(ACTEntry(kind: last.kind))
+            matrices[index].quadrants[quadrant].append(
+                ACTEntry(kind: last.kind, indentLevel: last.indentLevel)
+            )
             matrices[index].updatedAt = Date()
             save()
         }
+    }
+
+    func updateNote(_ text: String, for entryID: UUID) {
+        guard let matrixIndex = matrices.firstIndex(where: { $0.id == activeID }) else { return }
+        for quadrant in 0..<4 {
+            if let index = matrices[matrixIndex].quadrants[quadrant].firstIndex(where: { $0.id == entryID }) {
+                guard matrices[matrixIndex].quadrants[quadrant][index].note != text else { return }
+                matrices[matrixIndex].quadrants[quadrant][index].note = text
+                matrices[matrixIndex].updatedAt = Date()
+                save()
+                return
+            }
+        }
+    }
+
+    func entry(withID id: UUID) -> ACTEntry? {
+        activeMatrix.quadrants.flatMap { $0 }.first { $0.id == id }
+    }
+
+    func allTodos() -> [ACTEntry] {
+        let items = activeMatrix.quadrants.flatMap { $0 }.filter {
+            $0.kind == .todo && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let order = activeMatrix.todoOrder
+        return items.sorted { left, right in
+            let l = order.firstIndex(of: left.id) ?? Int.max
+            let r = order.firstIndex(of: right.id) ?? Int.max
+            if l != r { return l < r }
+            let li = items.firstIndex(where: { $0.id == left.id }) ?? 0
+            let ri = items.firstIndex(where: { $0.id == right.id }) ?? 0
+            return li < ri
+        }
+    }
+
+    // Dragging in the to-do list changes ONLY todoOrder, not quadrants.
+    func moveTodo(sourceID: UUID, to targetID: UUID, after: Bool) {
+        guard sourceID != targetID,
+              let matrixIndex = matrices.firstIndex(where: { $0.id == activeID }) else { return }
+        var ids = allTodos().map(\.id)
+        guard let source = ids.firstIndex(of: sourceID),
+              ids.contains(targetID) else { return }
+        ids.remove(at: source)
+        guard let destination = ids.firstIndex(of: targetID) else { return }
+        ids.insert(sourceID, at: destination + (after ? 1 : 0))
+        matrices[matrixIndex].todoOrder = ids
+        matrices[matrixIndex].updatedAt = Date()
+        save()
+    }
+
+    // Dragging a matrix row reorders entries only INSIDE its original quadrant.
+    func moveEntry(in quadrant: Int, sourceID: UUID, to targetID: UUID, after: Bool) {
+        guard (0..<4).contains(quadrant), sourceID != targetID,
+              let matrixIndex = matrices.firstIndex(where: { $0.id == activeID }) else { return }
+        var items = matrices[matrixIndex].quadrants[quadrant]
+        guard let from = items.firstIndex(where: { $0.id == sourceID }) else { return }
+        let item = items.remove(at: from)
+        guard let to = items.firstIndex(where: { $0.id == targetID }) else { return }
+        items.insert(item, at: to + (after ? 1 : 0))
+        matrices[matrixIndex].quadrants[quadrant] = items
+        matrices[matrixIndex].updatedAt = Date()
+        save()
     }
 
     func createMatrix() {
@@ -251,7 +358,7 @@ final class MatrixStore: ObservableObject {
     @discardableResult
     func importBackup(_ data: Data) throws -> Int {
         let backup = try Self.decoder.decode(MatrixBackup.self, from: data)
-        guard (1...3).contains(backup.version) else { throw BackupError.unsupportedVersion }
+        guard (1...4).contains(backup.version) else { throw BackupError.unsupportedVersion }
         let existingIDs = Set(matrices.map(\.id))
         var incoming = backup.matrices.filter { !existingIDs.contains($0.id) }
         for index in incoming.indices { incoming[index].repairIfNeeded() }
