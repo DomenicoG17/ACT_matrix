@@ -301,8 +301,10 @@ private struct ACTMatrixSettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Visualizzazione") {
+                Section {
                     Toggle("Mostra «Tocca per scrivere»", isOn: $showTapToWriteHint)
+                } header: {
+                    Text("Visualizzazione")
                 } footer: {
                     Text("Se disattivato, i riquadri vuoti rimangono completamente bianchi. Puoi sempre toccarli per iniziare a scrivere.")
                 }
