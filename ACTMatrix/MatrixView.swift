@@ -12,6 +12,8 @@ struct MatrixView: View {
     @State private var showRename = false
     @State private var titleDraft = ""
     @State private var showTodos = false
+    @State private var focusedFilter: ACTEntryKind?
+    @AppStorage("quoteThoughts") private var quoteThoughts = false
     @State private var noteRoute: TodoNoteRoute?
     @AppStorage("showTapToWriteHint") private var showTapToWriteHint = false
 
@@ -111,7 +113,7 @@ struct MatrixView: View {
         .fullScreenCover(item: $noteRoute) { route in
             TodoNotePage(entryID: route.id,
                          onClose: { noteRoute = nil },
-                         onShowAll: { noteRoute = nil; selectedQuadrant = nil; showTodos = false },
+                         onShowAll: { noteRoute = nil; returnToOverview() },
                          onNavigate: { quadrant in
                              noteRoute = nil
                              showTodos = false
@@ -128,8 +130,13 @@ struct MatrixView: View {
             ArchiveView { matrixID in
                 store.activate(matrixID)
                 selectedQuadrant = nil
+                focusedFilter = nil
                 showTodos = false
                 showArchive = false
+            } onOpenQuadrant: { matrixID, quadrant in
+                store.activate(matrixID)
+                showArchive = false
+                DispatchQueue.main.async { openQuadrant(quadrant, addBlank: true) }
             } onNew: {
                 createNewMatrix()
                 showArchive = false
@@ -186,6 +193,7 @@ struct MatrixView: View {
 
             Button {
                 selectedQuadrant = nil
+                focusedFilter = nil
                 withAnimation(.easeInOut(duration: 0.25)) { showTodos.toggle() }
             } label: {
                 Image(systemName: showTodos ? "square.grid.2x2" : "checklist")
@@ -195,8 +203,19 @@ struct MatrixView: View {
             .accessibilityLabel(showTodos ? "Torna alla matrice" : "Mostra tutti i to-do")
 
             if selectedQuadrant != nil {
+                if focusedFilter != nil {
+                    Button {
+                        focusedFilter = nil
+                        focusToken += 1
+                    } label: {
+                        Image(systemName: "pencil.line")
+                            .font(.system(size: 18))
+                            .frame(width: 34, height: 44)
+                    }
+                    .accessibilityLabel("Torna alla scrittura del riquadro")
+                }
                 Button {
-                    selectedQuadrant = nil
+                    returnToOverview()
                 } label: {
                     Image(systemName: "square.grid.2x2")
                         .font(.system(size: 20, weight: .regular))
@@ -240,21 +259,19 @@ struct MatrixView: View {
     }
 
     private var meNoticingControl: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 0) {
             if store.activeMatrix.meNoticingCount > 0 {
-                Button {
-                    store.adjustMeNoticing(by: -1)
-                } label: {
+                Button(action: { store.adjustMeNoticing(by: -1) }) {
                     Image(systemName: "minus")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(.secondary)
-                        .frame(width: 24, height: 46)
+                        .frame(width: 42, height: 48)
+                        .contentShape(Rectangle())
                 }
-                .accessibilityLabel("Correggi Me Noticing: meno uno")
+                .buttonStyle(.plain)
+                .accessibilityLabel("Me Noticing: diminuisci di uno")
             }
-            Button {
-                store.adjustMeNoticing(by: 1)
-            } label: {
+            Button(action: { store.adjustMeNoticing(by: 1) }) {
                 VStack(spacing: 1) {
                     Text("Me Noticing")
                         .font(.system(size: 10, weight: .semibold))
@@ -263,17 +280,16 @@ struct MatrixView: View {
                         .font(.system(size: 15, weight: .bold, design: .rounded))
                         .foregroundStyle(.red)
                 }
-                .padding(.horizontal, 10)
-                .frame(height: 46)
+                .frame(minWidth: 82, minHeight: 48)
                 .contentShape(Rectangle())
             }
-            .accessibilityLabel("Me Noticing, \(store.activeMatrix.meNoticingCount) momenti. Tocca per aggiungerne uno")
+            .buttonStyle(.plain)
+            .accessibilityLabel("Me Noticing: aumenta di uno")
         }
-        .buttonStyle(.plain)
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(Color.primary.opacity(0.13), lineWidth: 1))
         .shadow(color: .black.opacity(0.07), radius: 5, y: 2)
-        .zIndex(10)
+        .zIndex(20)
     }
 
     private func tile(_ quadrant: Int) -> some View {
@@ -314,7 +330,13 @@ struct MatrixView: View {
                     if !selected { openQuadrant(quadrant, addBlank: true) }
                 }
 
-                if selected {
+                if selected && focusedFilter != nil {
+                    FocusedEntryFilter(entries: entries,
+                                       kind: focusedFilter!,
+                                       quoteThoughts: quoteThoughts,
+                                       onOpenNote: { noteRoute = TodoNoteRoute(id: $0) })
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if selected {
                     BulletedEditor(
                         entries: Binding(
                             get: { store.entries(in: quadrant) },
@@ -326,12 +348,17 @@ struct MatrixView: View {
                             openQuadrant(destination, addBlank: true)
                         },
                         onNew: createNewMatrix,
-                        onShowAll: { selectedQuadrant = nil },
+                        onShowAll: returnToOverview,
                         onAdjustRecurrence: { index, delta in
                             store.adjustRecurrence(in: quadrant, at: index, by: delta)
                         },
                         onOpenTodo: { entryID in
                             noteRoute = TodoNoteRoute(id: entryID)
+                        },
+                        onFilter: { kind in
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                focusedFilter = kind
+                            }
                         }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -350,6 +377,15 @@ struct MatrixView: View {
                 )
         }
         .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
+        .simultaneousGesture(DragGesture(minimumDistance: 60).onEnded { drag in
+            guard selectedQuadrant == quadrant else { return }
+            let dx = drag.translation.width
+            let dy = drag.translation.height
+            guard abs(dx) > 95, abs(dx) > abs(dy) * 1.6 else { return }
+            withAnimation(.easeInOut(duration: 0.22)) {
+                focusedFilter = dx > 0 ? .image : .thought
+            }
+        })
         // Only text/empty space activates zoom. A counter tap must NOT zoom.
     }
 
@@ -387,7 +423,7 @@ struct MatrixView: View {
                                 } else {
                                     Text(entries[index].kind.symbol)
                                 }
-                                Text(entries[index].text)
+                                Text(entries[index].bodyText(quoteThoughts: quoteThoughts))
                                     .foregroundStyle(entries[index].kind == .todo ? Color.blue : Color.primary)
                                     .underline(entries[index].kind == .todo)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -467,28 +503,45 @@ struct MatrixView: View {
         .fixedSize(horizontal: true, vertical: false)
     }
 
+    private func returnToOverview() {
+        if selectedQuadrant != nil { store.adjustMeNoticing(by: 1) }
+        selectedQuadrant = nil
+        focusedFilter = nil
+        showTodos = false
+    }
+
     private func openQuadrant(_ quadrant: Int, addBlank: Bool) {
         if addBlank { store.prepareNewBullet(in: quadrant) }
         showTodos = false
+        focusedFilter = nil
         selectedQuadrant = quadrant
         focusToken += 1
     }
 
     private func createNewMatrix() {
         selectedQuadrant = nil
+        focusedFilter = nil
         showTodos = false
         store.createMatrix()
     }
 }
 
-// All to-do entries from the CURRENT matrix. Reordering here never moves the
-// original quadrant entries; the store saves a separate list of stable UUIDs.
+// Drag previews reorder immediately on hover. Only the final order is persisted,
+// never the quadrant order; cancelled drags restore the stored order on appearance.
 private struct TodoOverview: View {
     @EnvironmentObject private var store: MatrixStore
     let onOpenNote: (UUID) -> Void
+    @State private var previewOrder: [UUID] = []
+    @State private var dragging: UUID?
+
+    private var todos: [ACTEntry] {
+        let saved = store.allTodos()
+        let byID = Dictionary(uniqueKeysWithValues: saved.map { ($0.id, $0) })
+        let ids = previewOrder.filter { byID[$0] != nil }
+        return ids.compactMap { byID[$0] } + saved.filter { !ids.contains($0.id) }
+    }
 
     var body: some View {
-        let todos = store.allTodos()
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
@@ -503,31 +556,50 @@ private struct TodoOverview: View {
                     Image(systemName: "checklist")
                         .font(.system(size: 25))
                         .foregroundStyle(.teal)
-                }
-                .padding(.top, 9)
+                }.padding(.top, 9)
 
                 if todos.isEmpty {
                     ContentUnavailableView("Nessun to-do", systemImage: "checklist",
-                                           description: Text("Seleziona 🔲 su una voce della matrice per aggiungerla qui."))
+                        description: Text("Seleziona 🔲 su una voce della matrice per aggiungerla qui."))
                         .padding(.top, 48)
                 } else {
                     LazyVStack(spacing: 9) {
                         ForEach(todos) { item in
                             todoRow(item)
-                                .draggable(item.id.uuidString)
-                                .dropDestination(for: String.self) { values, location in
-                                    guard let value = values.first,
-                                          let source = UUID(uuidString: value) else { return false }
-                                    store.moveTodo(sourceID: source, to: item.id,
-                                                   after: location.y > 32)
-                                    return true
+                                .opacity(dragging == item.id ? 0.5 : 1)
+                                .onDrag {
+                                    dragging = item.id
+                                    return NSItemProvider(object: item.id.uuidString as NSString)
                                 }
+                                .onDrop(of: [.plainText], isTargeted: nil,
+                                        delegate: TodoLiveDrop(targetID: item.id,
+                                            dragging: $dragging,
+                                            onHover: { moving, target in
+                                                guard moving != target,
+                                                      let from = previewOrder.firstIndex(of: moving),
+                                                      let to = previewOrder.firstIndex(of: target)
+                                                else { return }
+                                                withAnimation(.interactiveSpring(response: 0.28,
+                                                                               dampingFraction: 0.82)) {
+                                                    previewOrder.move(fromOffsets: IndexSet(integer: from),
+                                                                      toOffset: to > from ? to + 1 : to)
+                                                }
+                                            },
+                                            onFinish: {
+                                                store.setTodoOrder(previewOrder)
+                                                dragging = nil
+                                            }))
                         }
                     }
                 }
             }
             .padding(.horizontal, 9)
             .padding(.bottom, 30)
+        }
+        .onAppear { previewOrder = store.allTodos().map(\.id) }
+        .onChange(of: store.activeID) { _, _ in
+            previewOrder = store.allTodos().map(\.id)
+            dragging = nil
         }
         .scrollIndicators(.hidden)
         .background(Color(uiColor: .systemGroupedBackground))
@@ -552,8 +624,7 @@ private struct TodoOverview: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-            }
-            .buttonStyle(.plain)
+            }.buttonStyle(.plain)
             Image(systemName: "chevron.right")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
@@ -566,25 +637,140 @@ private struct TodoOverview: View {
     }
 }
 
+private struct TodoLiveDrop: DropDelegate {
+    let targetID: UUID
+    @Binding var dragging: UUID?
+    let onHover: (UUID, UUID) -> Void
+    let onFinish: () -> Void
+
+    func dropEntered(info: DropInfo) {
+        if let dragging { onHover(dragging, targetID) }
+    }
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+    func performDrop(info: DropInfo) -> Bool {
+        guard dragging != nil else { return false }
+        onFinish()
+        return true
+    }
+}
+
+// In the focused quadrant, swipe right for images and left for thoughts.
+// Matching rows appear; their descendants stay collapsed until expanded.
+private struct FocusedEntryFilter: View {
+    let entries: [ACTEntry]
+    let kind: ACTEntryKind
+    let quoteThoughts: Bool
+    let onOpenNote: (UUID) -> Void
+    @State private var expanded: Set<UUID> = []
+
+    private var matches: [Int] {
+        entries.indices.filter { $0.kind == kind && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    private func descendants(after index: Int) -> [Int] {
+        let depth = entries[index].indentLevel
+        var children: [Int] = []
+        for next in (index + 1)..<entries.count {
+            if entries[next].indentLevel <= depth { break }
+            if !entries[next].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                children.append(next)
+            }
+        }
+        return children
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text(kind == .image ? "🏞️ Immagini" : "💭 Pensieri")
+                        .font(.headline)
+                    Spacer()
+                    Text("\(matches.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if matches.isEmpty {
+                    Text("Nessuna voce di questo tipo nel riquadro")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 12)
+                }
+                ForEach(matches, id: \.self) { index in
+                    let children = descendants(after: index)
+                    VStack(alignment: .leading, spacing: 7) {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(entries[index].kind.symbol)
+                            Text(entries[index].bodyText(quoteThoughts: quoteThoughts))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            if !children.isEmpty {
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        if !expanded.insert(entries[index].id).inserted {
+                                            expanded.remove(entries[index].id)
+                                        }
+                                    }
+                                } label: {
+                                    Image(systemName: expanded.contains(entries[index].id)
+                                          ? "chevron.up.circle" : "chevron.down.circle")
+                                        .font(.system(size: 18))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .accessibilityLabel(expanded.contains(entries[index].id)
+                                    ? "Comprimi sottovoci" : "Espandi sottovoci")
+                            }
+                        }
+                        if expanded.contains(entries[index].id) {
+                            ForEach(children, id: \.self) { child in
+                                HStack(alignment: .top, spacing: 6) {
+                                    Text("↳ \(entries[child].kind.symbol)")
+                                    Text(entries[child].bodyText(quoteThoughts: quoteThoughts))
+                                        .foregroundStyle(entries[child].kind == .todo ? Color.blue : Color.primary)
+                                        .underline(entries[child].kind == .todo)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .onTapGesture {
+                                            if entries[child].kind == .todo { onOpenNote(entries[child].id) }
+                                        }
+                                }
+                                .font(.subheadline)
+                                .padding(.leading, CGFloat(max(0, entries[child].indentLevel - entries[index].indentLevel)) * 13)
+                            }
+                        }
+                    }
+                    .padding(12)
+                    .background(Color(uiColor: .tertiarySystemGroupedBackground),
+                                in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+            .padding(.bottom, 26)
+        }
+        .scrollIndicators(.hidden)
+        .id(kind)
+    }
+}
+
 // A white, persistent note page for each to-do. It deliberately reuses the
 // same MatrixKeyboardBar as the main editor, including icons and indentation.
-private struct TodoNotePage: View {
+struct TodoNotePage: View {
     @EnvironmentObject private var store: MatrixStore
     let entryID: UUID
+    var matrixID: UUID? = nil
     let onClose: () -> Void
     let onShowAll: () -> Void
     let onNavigate: (Int) -> Void
     let onNew: () -> Void
 
     private var noteBinding: Binding<String> {
-        Binding(get: { store.entry(withID: entryID)?.note ?? "" },
-                set: { store.updateNote($0, for: entryID) })
+        Binding(get: { store.entry(withID: entryID, in: matrixID)?.note ?? "" },
+                set: { store.updateNote($0, for: entryID, in: matrixID) })
     }
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 0) {
-                Text(store.entry(withID: entryID)?.text ?? "To-do")
+                Text(store.entry(withID: entryID, in: matrixID)?.text ?? "To-do")
                     .foregroundStyle(.blue)
                     .underline()
                     .font(.subheadline.weight(.medium))
@@ -612,7 +798,9 @@ private struct TodoNotePage: View {
     }
 
     private var currentQuadrant: Int {
-        store.activeMatrix.quadrants.firstIndex(where: { quadrant in
+        let matrix = store.matrices.first(where: { $0.id == (matrixID ?? store.activeID) })
+            ?? store.activeMatrix
+        return matrix.quadrants.firstIndex(where: { quadrant in
             quadrant.contains(where: { $0.id == entryID })
         }) ?? 1
     }

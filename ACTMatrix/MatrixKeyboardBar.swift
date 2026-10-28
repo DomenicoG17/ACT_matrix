@@ -1,7 +1,7 @@
 import UIKit
 
 /// A compact native accessory that follows the iOS keyboard.
-/// Upper row: [💭 🎇 🏞️ 🔲]. Lower row: [New] [show all CENTERED] [2x2].
+/// Upper row: [💭 🎇 🏞️ 🔲 🎗️ 🔈]. Lower row: [New] [show all CENTERED] [2x2].
 final class MatrixKeyboardBar: UIView {
     var onNavigate: ((Int) -> Void)?
     var onNew: (() -> Void)?
@@ -65,7 +65,7 @@ final class MatrixKeyboardBar: UIView {
         for kind in ACTEntryKind.allCases where kind != .bullet {
             let button = UIButton(type: .system)
             button.setTitle(kind.symbol, for: .normal)
-            button.titleLabel?.font = .systemFont(ofSize: 21)
+            button.titleLabel?.font = .systemFont(ofSize: 19)
             button.layer.cornerRadius = 7
             button.layer.borderWidth = 1
             button.layer.borderColor = UIColor.clear.cgColor
@@ -73,7 +73,7 @@ final class MatrixKeyboardBar: UIView {
             button.addTarget(self, action: #selector(chooseKind(_:)), for: .touchUpInside)
             button.tag = kindIndex(kind)
             button.translatesAutoresizingMaskIntoConstraints = false
-            button.widthAnchor.constraint(equalToConstant: 32).isActive = true
+            button.widthAnchor.constraint(equalToConstant: 30).isActive = true
             button.heightAnchor.constraint(equalToConstant: 38).isActive = true
             kindButtons[kind] = button
             types.addArrangedSubview(button)

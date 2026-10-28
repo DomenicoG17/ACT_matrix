@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 // The icon is a property of EACH entry, not of the whole quadrant.
 // "bullet" preserves the look of notes created in ACT Matrix 1.0.
 enum ACTEntryKind: String, Codable, CaseIterable {
-    case bullet, thought, feeling, image, todo
+    case bullet, thought, feeling, image, todo, memory, sound
 
     var symbol: String {
         switch self {
@@ -14,6 +14,8 @@ enum ACTEntryKind: String, Codable, CaseIterable {
         case .feeling: return "🎇"
         case .image: return "🏞️"
         case .todo: return "🔲"
+        case .memory: return "🎗️"
+        case .sound: return "🔈"
         }
     }
 
@@ -26,6 +28,8 @@ enum ACTEntryKind: String, Codable, CaseIterable {
         case .feeling: return "Sensazione"
         case .image: return "Immagine"
         case .todo: return "Da fare"
+        case .memory: return "Ricordo"
+        case .sound: return "Suono"
         }
     }
 
@@ -78,6 +82,19 @@ struct ACTEntry: Identifiable, Codable, Equatable {
         let indent = String(repeating: "    ", count: indentLevel)
         // Nested entries retain BOTH their branching arrow and selected type.
         return indent + (indentLevel > 0 ? "↳ " + kind.prefix : kind.prefix)
+    }
+
+    // Quotation marks are a presentation preference, not part of stored text.
+    func bodyText(quoteThoughts: Bool) -> String {
+        guard kind == .thought && quoteThoughts else { return text }
+        // Avoid double quotation marks in older entries typed manually with quotes.
+        let body = text.hasPrefix("“") && text.hasSuffix("”") && text.count >= 2
+            ? String(text.dropFirst().dropLast()) : text
+        return "“\(body)”"
+    }
+
+    func formattedLine(quoteThoughts: Bool) -> String {
+        displayPrefix + bodyText(quoteThoughts: quoteThoughts)
     }
 
     var displayLine: String { displayPrefix + text }
@@ -173,7 +190,7 @@ struct ACTMatrix: Identifiable, Codable, Equatable {
 }
 
 struct MatrixBackup: Codable {
-    var version: Int = 5
+    var version: Int = 6
     var matrices: [ACTMatrix]
     var activeID: UUID
 }
@@ -259,15 +276,20 @@ final class MatrixStore: ObservableObject {
         let last = matrices[index].quadrants[quadrant].last ?? ACTEntry()
         if !last.text.isEmpty {
             matrices[index].quadrants[quadrant].append(
-                ACTEntry(kind: last.kind, indentLevel: last.indentLevel)
+                ACTEntry(kind: last.kind, indentLevel: 0)
             )
             matrices[index].updatedAt = Date()
+            save()
+        } else if last.indentLevel != 0 {
+            // Returning from overview always starts a fresh top-level entry.
+            let lastIndex = matrices[index].quadrants[quadrant].count - 1
+            matrices[index].quadrants[quadrant][lastIndex].indentLevel = 0
             save()
         }
     }
 
-    func updateNote(_ text: String, for entryID: UUID) {
-        guard let matrixIndex = matrices.firstIndex(where: { $0.id == activeID }) else { return }
+    func updateNote(_ text: String, for entryID: UUID, in matrixID: UUID? = nil) {
+        guard let matrixIndex = matrices.firstIndex(where: { $0.id == (matrixID ?? activeID) }) else { return }
         for quadrant in 0..<4 {
             if let index = matrices[matrixIndex].quadrants[quadrant].firstIndex(where: { $0.id == entryID }) {
                 guard matrices[matrixIndex].quadrants[quadrant][index].note != text else { return }
@@ -279,8 +301,36 @@ final class MatrixStore: ObservableObject {
         }
     }
 
-    func entry(withID id: UUID) -> ACTEntry? {
-        activeMatrix.quadrants.flatMap { $0 }.first { $0.id == id }
+    func entry(withID id: UUID, in matrixID: UUID? = nil) -> ACTEntry? {
+        (matrices.first(where: { $0.id == (matrixID ?? activeID) }) ?? activeMatrix)
+            .quadrants.flatMap { $0 }.first { $0.id == id }
+    }
+
+    struct TodoAcrossMatrices: Identifiable {
+        let matrixID: UUID
+        let matrixTitle: String
+        let date: Date
+        let entry: ACTEntry
+        var id: UUID { entry.id }
+    }
+
+    func allTodosAcrossMatrices() -> [TodoAcrossMatrices] {
+        matrices.flatMap { matrix in
+            matrix.quadrants.flatMap { $0 }
+                .filter { $0.kind == .todo && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .map { TodoAcrossMatrices(matrixID: matrix.id,
+                                          matrixTitle: matrix.displayTitle,
+                                          date: matrix.createdAt, entry: $0) }
+        }
+    }
+
+    func setTodoOrder(_ ids: [UUID]) {
+        guard let matrixIndex = matrices.firstIndex(where: { $0.id == activeID }) else { return }
+        let currentIDs = Set(allTodos().map(\.id))
+        guard Set(ids) == currentIDs, ids.count == currentIDs.count else { return }
+        matrices[matrixIndex].todoOrder = ids
+        matrices[matrixIndex].updatedAt = Date()
+        save()
     }
 
     func allTodos() -> [ACTEntry] {
@@ -388,7 +438,7 @@ final class MatrixStore: ObservableObject {
     @discardableResult
     func importBackup(_ data: Data) throws -> Int {
         let backup = try Self.decoder.decode(MatrixBackup.self, from: data)
-        guard (1...5).contains(backup.version) else { throw BackupError.unsupportedVersion }
+        guard (1...6).contains(backup.version) else { throw BackupError.unsupportedVersion }
         let existingIDs = Set(matrices.map(\.id))
         var incoming = backup.matrices.filter { !existingIDs.contains($0.id) }
         for index in incoming.indices { incoming[index].repairIfNeeded() }

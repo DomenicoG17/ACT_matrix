@@ -79,6 +79,7 @@ private final class RecurrenceRowControls: UIView {
 }
 
 struct BulletedEditor: UIViewRepresentable {
+    @AppStorage("quoteThoughts") private var quoteThoughts = false
     @Binding var entries: [ACTEntry]
     let focusToken: Int
     let currentQuadrant: Int
@@ -87,6 +88,7 @@ struct BulletedEditor: UIViewRepresentable {
     let onShowAll: () -> Void
     let onAdjustRecurrence: (Int, Int) -> Void
     let onOpenTodo: (UUID) -> Void
+    let onFilter: (ACTEntryKind) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
 
@@ -102,13 +104,21 @@ struct BulletedEditor: UIViewRepresentable {
         textView.keyboardDismissMode = .interactive
         textView.autocorrectionType = .yes
         textView.spellCheckingType = .yes
-        textView.text = Self.displayText(entries)
+        textView.text = Self.displayText(entries, quoteThoughts: quoteThoughts)
         textView.delegate = context.coordinator
         let linkTap = UITapGestureRecognizer(target: context.coordinator,
                                              action: #selector(Coordinator.openTodoOnTap(_:)))
         linkTap.delegate = context.coordinator
         linkTap.cancelsTouchesInView = true
         textView.addGestureRecognizer(linkTap)
+        for direction in [UISwipeGestureRecognizer.Direction.right, .left] {
+            let gesture = UISwipeGestureRecognizer(target: context.coordinator,
+                                                  action: #selector(Coordinator.focusedSwipe(_:)))
+            gesture.direction = direction
+            gesture.delegate = context.coordinator
+            gesture.cancelsTouchesInView = false
+            textView.addGestureRecognizer(gesture)
+        }
         context.coordinator.textView = textView
         textView.onLayout = { [weak coordinator = context.coordinator] in
             coordinator?.layoutCounters()
@@ -140,7 +150,7 @@ struct BulletedEditor: UIViewRepresentable {
         context.coordinator.parent = self
         context.coordinator.accessory?.selectQuadrant(currentQuadrant)
 
-        let display = Self.displayText(entries)
+        let display = Self.displayText(entries, quoteThoughts: quoteThoughts)
         if textView.text != display {
             let oldSelection = textView.selectedRange
             textView.text = display
@@ -157,16 +167,18 @@ struct BulletedEditor: UIViewRepresentable {
                 guard let textView = textView, textView.window != nil else { return }
                 textView.becomeFirstResponder()
                 let end = (textView.text as NSString).length
-                textView.selectedRange = NSRange(location: end, length: 0)
+                let last = entries.last
+                let insideQuote = quoteThoughts && last?.kind == .thought && end > 0
+                textView.selectedRange = NSRange(location: end - (insideQuote ? 1 : 0), length: 0)
                 textView.scrollRangeToVisible(textView.selectedRange)
                 context.coordinator.refreshSelectedKind()
             }
         }
     }
 
-    static func displayText(_ entries: [ACTEntry]) -> String {
+    static func displayText(_ entries: [ACTEntry], quoteThoughts: Bool = false) -> String {
         (entries.isEmpty ? [ACTEntry()] : entries)
-            .map(\.displayLine)
+            .map { $0.formattedLine(quoteThoughts: quoteThoughts) }
             .joined(separator: "\n")
     }
 
@@ -218,9 +230,10 @@ struct BulletedEditor: UIViewRepresentable {
                                     - (oldPrefix as NSString).length)
             pendingEdit = nil
             parent.entries = updated
-            view.text = BulletedEditor.displayText(updated)
+            view.text = BulletedEditor.displayText(updated, quoteThoughts: parent.quoteThoughts)
+            let openingQuote = parent.quoteThoughts && kind == .thought ? 1 : 0
             view.selectedRange = NSRange(location: lineRange.location
-                + (newPrefix as NSString).length
+                + (newPrefix as NSString).length + openingQuote
                 + min(relative, (updated[index].text as NSString).length), length: 0)
             styleTodoLinks()
             refreshSelectedKind()
@@ -243,9 +256,10 @@ struct BulletedEditor: UIViewRepresentable {
             updated[index].indentLevel = next
             pendingEdit = nil
             parent.entries = updated
-            view.text = BulletedEditor.displayText(updated)
+            view.text = BulletedEditor.displayText(updated, quoteThoughts: parent.quoteThoughts)
+            let openingQuote = parent.quoteThoughts && updated[index].kind == .thought ? 1 : 0
             view.selectedRange = NSRange(location: line.location
-                + (updated[index].displayPrefix as NSString).length
+                + (updated[index].displayPrefix as NSString).length + openingQuote
                 + min(relative, (updated[index].text as NSString).length), length: 0)
             styleTodoLinks()
             layoutCounters()
@@ -266,7 +280,7 @@ struct BulletedEditor: UIViewRepresentable {
             var offset = 0
             let font = view.font ?? UIFont.preferredFont(forTextStyle: .body)
             for entry in parent.entries {
-                let lineLength = (entry.displayLine as NSString).length
+                let lineLength = (entry.formattedLine(quoteThoughts: parent.quoteThoughts) as NSString).length
                 // Hanging indent: automatic line wraps start exactly where the
                 // entry's text starts, not at the main quadrant margin.
                 let paragraph = NSMutableParagraphStyle()
@@ -323,8 +337,20 @@ struct BulletedEditor: UIViewRepresentable {
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                                shouldReceive touch: UITouch) -> Bool {
+            if gestureRecognizer is UISwipeGestureRecognizer { return true }
             guard let view = textView else { return false }
             return tappedTodoID(at: touch.location(in: view), in: view) != nil
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            gestureRecognizer is UISwipeGestureRecognizer
+        }
+
+        @objc func focusedSwipe(_ gesture: UISwipeGestureRecognizer) {
+            guard gesture.state == .ended else { return }
+            textView?.resignFirstResponder()
+            parent.onFilter(gesture.direction == .right ? .image : .thought)
         }
 
         @objc func openTodoOnTap(_ gesture: UITapGestureRecognizer) {
@@ -339,7 +365,6 @@ struct BulletedEditor: UIViewRepresentable {
         // "💭 first💭 second" and a duplicate symbol is left in the text.
         private func mergeEntry(at index: Int, in view: UITextView) -> Bool {
             guard index > 0, parent.entries.indices.contains(index) else { return false }
-            let source = (view.text ?? "") as NSString
             let lines = (view.text ?? "").components(separatedBy: "\n")
             guard lines.indices.contains(index) else { return false }
             let precedingLines = Array(lines.prefix(index))
@@ -376,6 +401,19 @@ struct BulletedEditor: UIViewRepresentable {
                 let removedChar = raw.substring(with: range)
                 let before = raw.substring(to: range.location)
                 let lineIndex = before.filter { $0 == "\n" }.count
+                // An empty nested entry loses one nesting level per Backspace.
+                // Only once it reaches level 0 can it merge with the preceding row.
+                if parent.entries.indices.contains(lineIndex) {
+                    let entry = parent.entries[lineIndex]
+                    let lineStart = raw.lineRange(for: NSRange(location: range.location, length: 0)).location
+                    let prefixEnd = lineStart + (entry.displayPrefix as NSString).length
+                    if entry.text.isEmpty && entry.indentLevel > 0 &&
+                       range.location >= lineStart &&
+                       range.location <= prefixEnd + (parent.quoteThoughts && entry.kind == .thought ? 1 : 0) {
+                        adjustIndent(-1)
+                        return false
+                    }
+                }
                 if removedChar == "\n" {
                     if mergeEntry(at: lineIndex + 1, in: textView) { return false }
                 } else if parent.entries.indices.contains(lineIndex) {
@@ -402,9 +440,11 @@ struct BulletedEditor: UIViewRepresentable {
                 let existing = parent.entries.indices.contains(index)
                     ? parent.entries[index] : ACTEntry()
                 let insertion = "\n" + existing.displayPrefix
+                    + (parent.quoteThoughts && existing.kind == .thought ? "“”" : "")
                 textView.text = raw.replacingCharacters(in: range, with: insertion)
                 textView.selectedRange = NSRange(
-                    location: range.location + (insertion as NSString).length,
+                    location: range.location + (insertion as NSString).length
+                        - (parent.quoteThoughts && existing.kind == .thought ? 1 : 0),
                     length: 0
                 )
                 textViewDidChange(textView)
@@ -463,6 +503,13 @@ struct BulletedEditor: UIViewRepresentable {
                 // New lines inherit type and nesting, but not note or count.
                 let inherited = oldEntry ?? (index > 0 ? previous[min(index - 1, previous.count - 1)] : ACTEntry())
                 var result = ACTEntry.parseLine(rawLine, fallback: inherited)
+                if parent.quoteThoughts && result.kind == .thought {
+                    // Treat quotation marks as presentation, not as typed content.
+                    if result.text.hasPrefix("“") { result.text.removeFirst() }
+                    if let closing = result.text.lastIndex(of: "”") {
+                        result.text.remove(at: closing)
+                    }
+                }
                 if let oldEntry = oldEntry {
                     result.id = oldEntry.id
                     result.recurrenceCount = oldEntry.recurrenceCount

@@ -1,38 +1,34 @@
-# ACT Matrix — iOS v1.4.0
+# ACT Matrix iOS — v1.5.0
 
-Applicazione iOS offline (SwiftUI + UIKit, iOS 17+), dati salvati esclusivamente sul dispositivo. Rimangono **invariati** l'identificativo `app.actmatrix.mobile`, il percorso del salvataggio e il workflow `.github/workflows/build-ios.yml`, quindi puoi installare l'aggiornamento con SideStore senza rimuovere la versione precedente. **Esporta prima un backup JSON** per sicurezza.
+App iPhone offline (SwiftUI + UIKit, iOS 17+). Resta invariato il bundle ID `app.actmatrix.mobile` e il percorso locale dei dati: aggiornare tramite SideStore **senza disinstallare** l'app. Prima dell'aggiornamento, esportare un backup JSON da Home → menu ⋯.
 
-## Novità v1.4.0
+## Novità v1.5.0
 
-1. **Me Noticing:** pulsante al centro dell'incrocio dei quattro riquadri nella vista completa. Toccalo per registrare un momento di consapevolezza; il numero rosso è indipendente per ogni matrice e si salva automaticamente. Il piccolo `−` (quando il numero è maggiore di 0) permette di correggerlo.
-2. **Cancellazione alla fine di una voce:** premendo Backspace sul simbolo di una voce successiva o sul ritorno a capo, l'editor fonde correttamente le righe, eliminando il simbolo duplicato. Una voce vuota alla fine si elimina senza lasciare icone ripetute.
-3. **Ramificazioni con icona:** oltre alla freccia a L `↳`, una sottovoce mostra ora anche l'icona che scegli con i pulsanti della barra sopra la tastiera (ad esempio `↳ 💭 Pensiero`). L'icona resta modificabile anche dopo aver aumentato il rientro.
-4. **Pulsanti dei contatori più discreti:** nell'editor ingrandito, `+` e `−` sono piccoli e grigi; soltanto il numero delle ricorrenze è rosso, come nella panoramica.
-5. **Testo di invito facoltativo:** la scritta "Tocca per scrivere…" è **nascosta per impostazione predefinita**, ma puoi riattivarla in **☰ Home → ⚙︎ Impostazioni → Mostra «Tocca per scrivere»**. Il tocco per modificare funziona anche con la scritta nascosta.
-6. **Scorrimento fra matrici:** nella panoramica completa, fai swipe **verso l'alto** per passare a una matrice più vecchia e **verso il basso** per una più recente. Per evitare conflitti con lo scorrimento delle voci dentro i riquadri, **inizia lo swipe dalla zona centrale oppure da un bordo laterale**. Non c'è passaggio automatico dall'ultima alla prima. Il titolo ora mostra il numero della matrice rispetto al totale.
-7. **Testo delle sottovoci su più righe:** se una voce rientrata va a capo automaticamente, le righe successive iniziano allineate al testo della sottovoce, non al margine del riquadro (rientro sporgente di paragrafo).
+1. **🎗️ Ricordo e 🔈 Suono:** nuovi tipi di voce nella barra sopra la tastiera, accanto a 💭 🎇 🏞️ 🔲; anche le sottovoci possono usare entrambe le icone. Premendo di nuovo il tipo scelto si ritorna al punto elenco normale.
+2. **Me Noticing:** il `−` al centro della matrice ora ha una propria area di tocco, separata dal pulsante di incremento. Ritornare dal riquadro ingrandito alla vista 2×2, con il pulsante in alto o sopra la tastiera, incrementa automaticamente Me Noticing di **1** (non quando si apre Home o una nuova matrice).
+3. **Virgolette automatiche per i pensieri:** Home ☰ → ⚙️ Impostazioni → *Racchiudi sempre i pensieri tra “virgolette”*. Attiva la presentazione con virgolette tipografiche in anteprima, nello zoom e nel filtro pensieri. La preferenza è locale e **non altera il testo originale nei salvataggi**.
+4. **Backspace in una sottovoce vuota:** se premi Cancella all'inizio di una sottovoce vuota, il rientro diminuisce di un livello per volta; solo quando raggiunge il livello zero si può unire alla riga precedente.
+5. **Livello zero quando riapri un riquadro:** dalla vista totale, una nuova voce viene creata al livello principale (non eredita il rientro dell'ultima sottovoce).
+6. **To-do globali:** Home ☰ → *Tutti i to-do*. Include i to-do delle **diverse matrici**, indicando matrice di origine e data; toccare il testo apre i rispettivi appunti, senza confondere le matrici.
+7. **Drag con anteprima nella lista to-do:** mentre trascini, le altre voci si spostano in modo animato per far spazio. Il nuovo ordine viene salvato solo nella lista to-do della matrice corrente: la matrice originale rimane invariata.
+8. **Swipe nella vista ingrandita:** swipe **verso destra** per visualizzare solo le 🏞️ immagini, swipe **verso sinistra** per visualizzare solo i 💭 pensieri. Le sottoramificazioni sono nascoste per impostazione predefinita e si possono espandere toccando il relativo chevron. Usa la matita nella barra superiore per ritornare alla scrittura, oppure l'icona 2×2 per tornare alla matrice completa.
 
-## Aggiornamento da GitHub usando solo l'iPhone
+## Aggiornamento dall'iPhone, senza cambiare il workflow
 
-### Aggiornamento rapido dalla v1.3.1
+Usando **ACTMatrix-update-v1.5.0-5-Swift.zip**, estrai lo ZIP nell'app File e sostituisci **cinque file** nella cartella `ACTMatrix/` del repository GitHub:
 
-- Estrai `ACTMatrix-update-v1.4.0-4-Swift-files.zip` nell'app File.
-- Carica e sostituisci i quattro file `ArchiveView.swift`, `BulletedEditor.swift`, `MatrixStore.swift` e `MatrixView.swift` nella cartella **`ACTMatrix/`** del repository `DomenicoG17/ACT_matrix`.
-- Facoltativo: sostituisci `ACTMatrix.xcodeproj/project.pbxproj` con quello della versione completa per aggiornare il numero versione/build a **1.4.0 (6)**.
-- Da GitHub: **Actions → Build ACT Matrix iOS (unsigned IPA) → Run workflow**. Scarica l'artefatto IPA e installalo in SideStore come aggiornamento dell'app esistente.
+- `MatrixStore.swift`
+- `MatrixView.swift`
+- `BulletedEditor.swift`
+- `MatrixKeyboardBar.swift`
+- `ArchiveView.swift`
 
-### Installazione con il progetto completo
+Se desideri che iOS mostri la nuova versione nelle informazioni dell'app, sostituisci facoltativamente il file `ACTMatrix.xcodeproj/project.pbxproj` con quello del progetto completo (**v1.5.0, build 8**). Non è necessario aggiornare il workflow `.github/workflows/build-ios.yml`, che è identico a quello già funzionante.
 
-Estrai `ACTMatrix-iOS-v1.4.0.zip`; caricane il contenuto nella **radice** del repository conservando le cartelle `ACTMatrix`, `ACTMatrix.xcodeproj`, `.github/workflows`. La cartella `.github` è nascosta su alcuni dispositivi; se il workflow esiste già sul repository non è necessario ricaricarla.
+Dopo aver fatto *Commit changes*, apri **Actions → Build ACT Matrix iOS (unsigned IPA) → Run workflow**. Scarica l'artefatto `ACTMatrix-unsigned-IPA`, estrai `.ipa` e installalo tramite SideStore senza cancellare l'app esistente.
 
-## Dati e compatibilità
+## Compatibilità e controlli
 
-- `ACTMatrix.meNoticingCount` è una nuova proprietà opzionale in decodifica. Per tutti i salvataggi precedenti il valore è 0.
-- I contatori delle singole voci, gli ID persistenti, i to-do, gli appunti, i rientri e l'ordine personalizzato non sono azzerati.
-- Nuovo formato backup **v5**, con importazione retrocompatibile delle versioni 1–5.
-- L'impostazione della scritta "Tocca per scrivere…" è salvata in `UserDefaults`, separatamente dai dati delle matrici.
-- Nessuna nuova dipendenza, nessuna modifica al workflow e nessun servizio online necessario per usare l'app.
+Il modello importa i backup dalla versione 1 alla 6. La v6 aggiunge solamente nuovi valori per `ACTEntryKind` (ricordo/suono); gli ID delle voci, contatori, note, rientri, ordine to-do e Me Noticing esistenti vengono preservati. Le virgolette sono una preferenza in UserDefaults e non cambiano il file JSON.
 
-## Verifiche
-
-Eseguiti controllo sintattico di tutti i sorgenti Swift con Swift 6.2, test con Foundation per le ramificazioni, la conversione dei vecchi dati e la serializzazione del nuovo contatore, verifica dei percorsi Xcode e degli ZIP. Questi test **non equivalgono a una compilazione iOS reale**: quest'ultima richiede Xcode tramite il workflow GitHub.
+**Controlli locali eseguiti:** analisi sintattica dei file Swift con Swift 6 su Linux; test di decodifica di salvataggi precedenti, serializzazione e conservazione dei contatori; verifica dei file e degli ZIP. **Questi controlli non sostituiscono una build Xcode/iPhone reale**: la verifica finale avviene su GitHub Actions e poi sul dispositivo, soprattutto per swipe, riordino dinamico e tastiera.

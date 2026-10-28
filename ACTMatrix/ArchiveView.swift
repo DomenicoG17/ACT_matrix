@@ -1,6 +1,11 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+private struct GlobalNoteRoute: Identifiable {
+    let id: UUID
+    let matrixID: UUID
+}
+
 private struct ACTDayGroup: Identifiable {
     let date: Date
     let matrices: [ACTMatrix]
@@ -19,6 +24,7 @@ struct ArchiveView: View {
     @Environment(\.dismiss) private var dismiss
 
     let onSelect: (UUID) -> Void
+    let onOpenQuadrant: (UUID, Int) -> Void
     let onNew: () -> Void
 
     @State private var expandedMonths: Set<Date> = []
@@ -32,6 +38,8 @@ struct ArchiveView: View {
     @State private var showImport = false
     @State private var feedbackMessage: String?
     @State private var showSettings = false
+    @State private var showGlobalTodos = false
+    @State private var globalNoteRoute: GlobalNoteRoute?
 
     // The tree is grouped by CREATION date, not last-modified date.
     // Months and days are generated from the actual saved timestamps.
@@ -57,6 +65,29 @@ struct ArchiveView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    Button {
+                        showGlobalTodos = true
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "checklist")
+                                .foregroundStyle(.teal)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Tutti i to-do")
+                                    .font(.headline)
+                                    .foregroundStyle(.primary)
+                                Text("Da tutte le matrici · \(store.allTodosAcrossMatrices().count) attività")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.vertical, 5)
+                    }
+                }
                 Section {
                     ForEach(monthGroups) { month in
                         DisclosureGroup(isExpanded: Binding(
@@ -162,6 +193,42 @@ struct ArchiveView: View {
             }
             .sheet(isPresented: $showSettings) {
                 ACTMatrixSettingsView()
+            }
+            .sheet(isPresented: $showGlobalTodos) {
+                NavigationStack {
+                    GlobalTodoList(onOpen: { item in
+                        globalNoteRoute = GlobalNoteRoute(id: item.entry.id,
+                                                          matrixID: item.matrixID)
+                    })
+                    .environmentObject(store)
+                    .navigationTitle("Tutti i to-do")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button("Chiudi") { showGlobalTodos = false }
+                        }
+                    }
+                }
+                .fullScreenCover(item: $globalNoteRoute) { route in
+                    TodoNotePage(entryID: route.id, matrixID: route.matrixID,
+                                 onClose: { globalNoteRoute = nil },
+                                 onShowAll: {
+                                     globalNoteRoute = nil
+                                     showGlobalTodos = false
+                                     onSelect(route.matrixID)
+                                 },
+                                 onNavigate: { q in
+                                     globalNoteRoute = nil
+                                     showGlobalTodos = false
+                                     onOpenQuadrant(route.matrixID, q)
+                                 },
+                                 onNew: {
+                                     globalNoteRoute = nil
+                                     showGlobalTodos = false
+                                     onNew()
+                                 })
+                    .environmentObject(store)
+                }
             }
             .alert("Rinomina matrice", isPresented: Binding(
                 get: { renamingID != nil },
@@ -297,12 +364,14 @@ struct ArchiveView: View {
 private struct ACTMatrixSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("showTapToWriteHint") private var showTapToWriteHint = false
+    @AppStorage("quoteThoughts") private var quoteThoughts = false
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
                     Toggle("Mostra «Tocca per scrivere»", isOn: $showTapToWriteHint)
+                    Toggle("Racchiudi sempre i pensieri tra “virgolette”", isOn: $quoteThoughts)
                 } header: {
                     Text("Visualizzazione")
                 } footer: {
@@ -317,6 +386,50 @@ private struct ACTMatrixSettingsView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Fine") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+
+// An archive-wide list. Opening notes does not change the selected matrix;
+// the route contains both stable matrix and entry identifiers.
+private struct GlobalTodoList: View {
+    @EnvironmentObject private var store: MatrixStore
+    let onOpen: (MatrixStore.TodoAcrossMatrices) -> Void
+
+    var body: some View {
+        let items = store.allTodosAcrossMatrices()
+        List {
+            if items.isEmpty {
+                ContentUnavailableView("Nessun to-do", systemImage: "checklist",
+                    description: Text("Le voci 🔲 di tutte le matrici compariranno qui."))
+            } else {
+                ForEach(items) { item in
+                    Button { onOpen(item) } label: {
+                        HStack(alignment: .top, spacing: 11) {
+                            Text("🔲")
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(item.entry.text)
+                                    .foregroundStyle(.blue)
+                                    .underline()
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text("\(item.matrixTitle) · \(item.date.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if !item.entry.note.isEmpty {
+                                    Label("Appunti presenti", systemImage: "note.text")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
